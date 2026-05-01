@@ -46,6 +46,6 @@ export const config = {
     "/login",
     "/register",
 
-    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|mcp-sandbox.html).*)",
   ],
 };

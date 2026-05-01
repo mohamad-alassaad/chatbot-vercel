@@ -1,5 +1,6 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
+import { hasUIPayload } from "@/lib/ai/mcp/types";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
@@ -16,6 +17,7 @@ import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { SparklesIcon } from "./icons";
+import { MCPUIResource } from "./mcp-ui-resource";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
@@ -264,6 +266,32 @@ const PurePreviewMessage = ({
           />
         </div>
       );
+    }
+
+    if (type === "dynamic-tool") {
+      const dynPart = part as {
+        toolCallId: string;
+        state: string;
+        toolName: string;
+        input?: Record<string, unknown>;
+        output?: unknown;
+      };
+      if (
+        dynPart.state === "output-available" &&
+        hasUIPayload(dynPart.output)
+      ) {
+        return (
+          <MCPUIResource
+            html={dynPart.output.ui.html}
+            key={dynPart.toolCallId}
+            structuredContent={dynPart.output.structuredContent}
+            text={dynPart.output.text}
+            toolInput={dynPart.input}
+            toolName={dynPart.toolName}
+          />
+        );
+      }
+      return null;
     }
 
     if (type === "tool-requestSuggestions") {

@@ -12,6 +12,7 @@ import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
 import { auth, type UserType } from "@/app/(auth)/auth";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
+import { getPizzazTools } from "@/lib/ai/mcp/pizzaz-client";
 import {
   allowedModelIds,
   chatModels,
@@ -188,6 +189,14 @@ export async function POST(request: Request) {
 
     const modelMessages = await convertToModelMessages(uiMessages);
 
+    const mcpTools = process.env.MCP_PIZZAZ_URL
+      ? await getPizzazTools().catch((err) => {
+          console.warn("Failed to load Pizzaz MCP tools:", err);
+          return {};
+        })
+      : {};
+    const mcpToolNames = Object.keys(mcpTools);
+
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
@@ -199,13 +208,14 @@ export async function POST(request: Request) {
           experimental_activeTools:
             isReasoningModel && !supportsTools
               ? []
-              : [
+              : ([
                   "getWeather",
                   "createDocument",
                   "editDocument",
                   "updateDocument",
                   "requestSuggestions",
-                ],
+                  ...mcpToolNames,
+                ] as never),
           providerOptions: {
             ...(modelConfig?.gatewayOrder && {
               gateway: { order: modelConfig.gatewayOrder },
@@ -232,6 +242,7 @@ export async function POST(request: Request) {
               dataStream,
               modelId: chatModel,
             }),
+            ...mcpTools,
           },
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,

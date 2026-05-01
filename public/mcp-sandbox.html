@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>MCP Sandbox Proxy</title>
+    <style>
+      html, body { margin: 0; height: 100%; width: 100%; background: transparent; }
+      body { display: flex; flex-direction: column; }
+      iframe { background: transparent; border: 0; flex: 1 1 auto; min-height: 0; color-scheme: inherit; }
+    </style>
+  </head>
+  <body>
+    <script>
+      // MCP Apps SDK sandbox proxy. Bridges parent host <-> inner iframe (widget HTML).
+      // POC: same-origin proxy for local dev. Production should host on a separate origin.
+      console.log("[mcp-sandbox] script loaded", { referrer: document.referrer });
+      (function () {
+        var EXPECTED_HOST_ORIGIN = (function () {
+          try { return document.referrer ? new URL(document.referrer).origin : null; }
+          catch (_) { return null; }
+        })();
+        var OWN_ORIGIN = window.location.origin;
+        var PROXY_READY = "ui/notifications/sandbox-proxy-ready";
+        var RESOURCE_READY = "ui/notifications/sandbox-resource-ready";
+
+        var inner = document.createElement("iframe");
+        inner.style.width = "100%";
+        inner.style.height = "100%";
+        inner.style.border = "0";
+        inner.setAttribute(
+          "sandbox",
+          "allow-scripts allow-same-origin allow-forms allow-popups"
+        );
+        document.body.appendChild(inner);
+
+        function postToParent(data) {
+          try {
+            window.parent.postMessage(data, EXPECTED_HOST_ORIGIN || "*");
+          } catch (e) {
+            console.error("[mcp-sandbox] post to parent failed", e);
+          }
+        }
+
+        window.addEventListener("message", function (event) {
+          if (event.source === window.parent) {
+            if (
+              EXPECTED_HOST_ORIGIN &&
+              event.origin !== EXPECTED_HOST_ORIGIN
+            ) {
+              return;
+            }
+            var data = event.data;
+            if (data && data.method === RESOURCE_READY) {
+              var params = data.params || {};
+              if (typeof params.sandbox === "string") {
+                inner.setAttribute("sandbox", params.sandbox);
+              }
+              if (typeof params.html === "string") {
+                var doc =
+                  inner.contentDocument ||
+                  (inner.contentWindow && inner.contentWindow.document);
+                if (doc) {
+                  doc.open();
+                  doc.write(params.html);
+                  doc.close();
+                } else {
+                  inner.srcdoc = params.html;
+                }
+              }
+              return;
+            }
+            if (inner.contentWindow) {
+              inner.contentWindow.postMessage(data, "*");
+            }
+            return;
+          }
+          if (event.source === inner.contentWindow) {
+            postToParent(event.data);
+          }
+        });
+
+        // Notify host that the sandbox proxy is ready. We post once immediately and
+        // again on the next macrotask in case the host's listener attached late.
+        var readyMessage = { jsonrpc: "2.0", method: PROXY_READY, params: {} };
+        console.log("[mcp-sandbox] posting proxy-ready to parent", {
+          target: EXPECTED_HOST_ORIGIN || "*",
+        });
+        postToParent(readyMessage);
+        setTimeout(function () { postToParent(readyMessage); }, 0);
+        setTimeout(function () { postToParent(readyMessage); }, 100);
+      })();
+    </script>
+  </body>
+</html>

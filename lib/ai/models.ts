@@ -1,11 +1,10 @@
-export const DEFAULT_CHAT_MODEL = "moonshotai/kimi-k2.5";
+export const DEFAULT_CHAT_MODEL = "openai-direct/gpt-4o-mini";
 
 export const titleModel = {
-  id: "mistral/mistral-small",
-  name: "Mistral Small",
-  provider: "mistral",
+  id: "openai-direct/gpt-4o-mini",
+  name: "GPT-4o mini (direct)",
+  provider: "openai",
   description: "Fast model for title generation",
-  gatewayOrder: ["mistral"],
 };
 
 export type ModelCapabilities = {
@@ -24,6 +23,18 @@ export type ChatModel = {
 };
 
 export const chatModels: ChatModel[] = [
+  {
+    id: "openai-direct/gpt-4o-mini",
+    name: "GPT-4o mini (direct)",
+    provider: "openai",
+    description: "OpenAI GPT-4o mini via direct API key",
+  },
+  {
+    id: "openai-direct/gpt-4o",
+    name: "GPT-4o (direct)",
+    provider: "openai",
+    description: "OpenAI GPT-4o via direct API key",
+  },
   {
     id: "deepseek/deepseek-v3.2",
     name: "DeepSeek V3.2",
@@ -82,6 +93,12 @@ export async function getCapabilities(): Promise<
 > {
   const results = await Promise.all(
     chatModels.map(async (model) => {
+      if (model.id.startsWith("openai-direct/")) {
+        return [
+          model.id,
+          { tools: true, vision: true, reasoning: false },
+        ];
+      }
       try {
         const res = await fetch(
           `https://ai-gateway.vercel.sh/v1/models/${model.id}/endpoints`,
