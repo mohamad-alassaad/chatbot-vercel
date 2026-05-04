@@ -67,6 +67,80 @@ describe("renderMessageBlocks", () => {
       ])
     ).toEqual([{ kind: "text", body: "ok" }]);
   });
+
+  it("emits a tool block for dynamic-tool parts and pulls text from output", () => {
+    const blocks = renderMessageBlocks([
+      {
+        type: "dynamic-tool",
+        toolName: "pizza_finder",
+        state: "output-available",
+        input: { city: "SF" },
+        output: { text: "5 pies found" },
+      },
+    ]);
+    expect(blocks).toEqual([
+      {
+        kind: "tool",
+        name: "pizza_finder",
+        summary: "5 pies found",
+        inputJson: '{\n  "city": "SF"\n}',
+        note: null,
+      },
+    ]);
+  });
+
+  it("emits a tool block for `tool-<name>` shape and falls back to type slice", () => {
+    const blocks = renderMessageBlocks([
+      {
+        type: "tool-getWeather",
+        state: "output-available",
+        input: { city: "Paris" },
+        output: { text: "13°C" },
+      },
+    ]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      kind: "tool",
+      name: "getWeather",
+      summary: "13°C",
+    });
+  });
+
+  it("flags MCP-UI iframe outputs with a note (not embedded inline)", () => {
+    const blocks = renderMessageBlocks([
+      {
+        type: "dynamic-tool",
+        toolName: "pizza_carousel",
+        state: "output-available",
+        input: { q: "pepperoni" },
+        output: {
+          text: "Here's the carousel",
+          ui: { html: "<html>...</html>", templateUri: "x", mimeType: "y" },
+        },
+      },
+    ]);
+    expect(blocks[0]).toMatchObject({
+      kind: "tool",
+      name: "pizza_carousel",
+      summary: "Here's the carousel",
+      note: expect.stringContaining("interactive UI"),
+    });
+  });
+
+  it("truncates very long input JSON", () => {
+    const big = { payload: "x".repeat(2000) };
+    const blocks = renderMessageBlocks([
+      {
+        type: "tool-test",
+        state: "output-available",
+        input: big,
+        output: { text: "ok" },
+      },
+    ]);
+    const block = blocks[0] as { inputJson: string };
+    expect(block.inputJson.endsWith("…")).toBe(true);
+    expect(block.inputJson.length).toBeLessThanOrEqual(801);
+  });
 });
 
 describe("chatToMarkdown", () => {
@@ -177,6 +251,31 @@ describe("chatToMarkdown", () => {
       },
     ]);
     expect(md).not.toMatch(/\n{3,}/);
+  });
+
+  it("renders tool calls with name, JSON input, and summary", () => {
+    const md = chatToMarkdown({ id: "c", title: "T", createdAt: fixedDate }, [
+      {
+        id: "m1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "weather",
+            state: "output-available",
+            input: { city: "Paris" },
+            output: { text: "13°C and clear" },
+          },
+          { type: "text", text: "Looks nice." },
+        ],
+        createdAt: fixedDate,
+      },
+    ]);
+    expect(md).toContain("🛠 **Tool call:** `weather`");
+    expect(md).toContain("```json");
+    expect(md).toContain('"city": "Paris"');
+    expect(md).toContain("13°C and clear");
+    expect(md).toContain("Looks nice.");
   });
 
   it("ends with a single trailing newline", () => {

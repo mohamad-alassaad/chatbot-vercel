@@ -5,6 +5,50 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P6.1 — Export fidelity: emojis, tool calls, browser-print path
+
+Follow-up to P6 after a real-world export where the pizza-map carousel
+and 🍕 emoji didn't make it into the PDF.
+
+**Added**
+
+- `Font.registerEmojiSource(twemoji)` in the PDF document — Helvetica
+  has no emoji glyphs, so codepoints fell back to placeholder boxes
+  (`<U`). Now resolved via Twemoji PNG glyphs from a CDN.
+- `renderMessageBlocks` now walks **tool-call / tool-result** parts
+  (`tool-<name>`, `dynamic-tool`, plus legacy `tool-call` / `tool-result`).
+  Emits a new `tool` block with `name`, JSON-stringified `input`
+  (truncated at 800 chars), a textual `summary` pulled from
+  `output.text` / `output.summary`, and a `note` flagging MCP-UI
+  outputs that intentionally aren't embedded inline.
+- `chatToMarkdown` and the PDF renderer both render `tool` blocks
+  (markdown: fenced JSON + summary; PDF: tinted left-bar block).
+- **`/chat/:id/print` route** under a new `(print)` layout that bypasses
+  the chat sidebar. Server-renders the chat with print-friendly
+  Tailwind, embeds MCP-UI tool outputs as live `<iframe srcDoc>` so the
+  browser actually executes them at print time. A small client
+  `AutoPrintTrigger` calls `window.print()` ~1.5 s after paint and
+  exposes a manual button as a fallback.
+- **"PDF (rich, browser print)"** entry added to the chat row's
+  Download submenu — opens the print route in a new tab. This is the
+  high-fidelity path: the user's browser does the rendering, so the
+  carousel, images, and any iframe content end up in the PDF for free.
+
+**Trade-offs**
+
+- Did not add Puppeteer / headless Chromium for server-side rendering
+  of MCP-UI iframes. The browser-print path achieves the same outcome
+  with zero dependencies, at the cost of one extra click.
+- Twemoji is loaded from cdnjs at render time. If outbound network is
+  blocked, emojis fall back to Helvetica (boxes). Tracked under
+  Phase A1 — for self-hosting we'll bundle the PNG set.
+
+**Tests**
+
+- 5 new unit tests cover tool-block emission for `dynamic-tool` and
+  `tool-<name>` shapes, MCP-UI note tagging, and JSON truncation.
+- 70/70 unit tests pass; typecheck clean; biome clean.
+
 ### P6 — Export conversation (Markdown + PDF) (shipped)
 
 Download any chat as a clean `.md` or a print-ready `.pdf`.

@@ -1,5 +1,11 @@
 import { useDraggable } from "@dnd-kit/core";
-import { DownloadIcon, FileTextIcon, PinIcon, PinOffIcon } from "lucide-react";
+import {
+  DownloadIcon,
+  FileTextIcon,
+  PinIcon,
+  PinOffIcon,
+  PrinterIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { memo } from "react";
 import { toast } from "sonner";
@@ -169,6 +175,15 @@ const PureChatItem = ({
                 >
                   <FileTextIcon />
                   <span>PDF (.pdf)</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onSelect={() => {
+                    window.open(`/chat/${chat.id}/print`, "_blank");
+                  }}
+                >
+                  <PrinterIcon />
+                  <span>PDF (rich, browser print)</span>
                 </DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuPortal>

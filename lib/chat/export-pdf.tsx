@@ -4,6 +4,7 @@
 
 import {
   Document,
+  Font,
   Link,
   Page,
   StyleSheet,
@@ -15,6 +16,13 @@ import {
   type ExportableMessage,
   renderMessageBlocks,
 } from "./export";
+
+// Twemoji PNG fallback for emoji glyphs — Helvetica has none.
+// Loaded lazily per render; cached by @react-pdf at runtime.
+Font.registerEmojiSource({
+  format: "png",
+  url: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/",
+});
 
 const styles = StyleSheet.create({
   page: {
@@ -66,6 +74,37 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     color: "#0369a1",
     marginBottom: 4,
+  },
+  toolBlock: {
+    backgroundColor: "#f8fafc",
+    borderLeftWidth: 2,
+    borderLeftColor: "#94a3b8",
+    borderLeftStyle: "solid",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 6,
+  },
+  toolHeader: {
+    fontSize: 9.5,
+    fontFamily: "Helvetica-Bold",
+    color: "#334155",
+    marginBottom: 2,
+  },
+  toolJson: {
+    fontFamily: "Courier",
+    fontSize: 8.5,
+    color: "#1e293b",
+    marginBottom: 2,
+  },
+  toolSummary: {
+    fontSize: 9.5,
+    color: "#0f172a",
+  },
+  toolNote: {
+    fontSize: 8.5,
+    fontStyle: "italic",
+    color: "#64748b",
+    marginTop: 2,
   },
   empty: {
     fontStyle: "italic",
@@ -142,10 +181,28 @@ export function ChatExportDocument({
                       </Text>
                     );
                   }
+                  if (block.kind === "attachment") {
+                    return (
+                      <Link key={key} src={block.url} style={styles.attachment}>
+                        {`📎 ${block.name}`}
+                      </Link>
+                    );
+                  }
                   return (
-                    <Link key={key} src={block.url} style={styles.attachment}>
-                      {`📎 ${block.name}`}
-                    </Link>
+                    <View key={key} style={styles.toolBlock} wrap={false}>
+                      <Text style={styles.toolHeader}>
+                        🛠 Tool: {block.name}
+                      </Text>
+                      {block.inputJson ? (
+                        <Text style={styles.toolJson}>{block.inputJson}</Text>
+                      ) : null}
+                      {block.summary ? (
+                        <Text style={styles.toolSummary}>{block.summary}</Text>
+                      ) : null}
+                      {block.note ? (
+                        <Text style={styles.toolNote}>{block.note}</Text>
+                      ) : null}
+                    </View>
                   );
                 })}
               </View>
