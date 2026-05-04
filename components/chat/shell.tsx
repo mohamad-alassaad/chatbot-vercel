@@ -58,6 +58,9 @@ export function ChatShell() {
   const stopRef = useRef(stop);
   stopRef.current = stop;
 
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
   const prevChatIdRef = useRef(chatId);
   useEffect(() => {
     if (prevChatIdRef.current !== chatId) {
@@ -68,6 +71,20 @@ export function ChatShell() {
       setAttachments([]);
     }
   }, [chatId, setArtifact]);
+
+  // Phase 0 / P7 — Esc cancels an in-flight stream from anywhere on the page.
+  useEffect(() => {
+    const onCancel = () => {
+      if (
+        statusRef.current === "streaming" ||
+        statusRef.current === "submitted"
+      ) {
+        stopRef.current();
+      }
+    };
+    window.addEventListener("cancel-streaming", onCancel);
+    return () => window.removeEventListener("cancel-streaming", onCancel);
+  }, []);
 
   return (
     <>

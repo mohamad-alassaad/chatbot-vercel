@@ -5,6 +5,35 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P7 — Keyboard shortcuts (shipped)
+
+A global keymap covering the daily-use loop, with a `?`-triggered help
+modal listing every shortcut.
+
+**Added**
+
+- `<KeyboardShortcuts />` mounted in the chat layout — single window
+  `keydown` listener. Detects mac vs non-mac for the modifier glyph.
+  - `⌘/Ctrl + Shift + O` → new chat (`router.push("/")`)
+  - `⌘/Ctrl + ,` → open settings (`router.push("/settings/memory")`)
+  - `Esc` → dispatches `cancel-streaming` (only when not focused on a
+    text field, so the input's own Esc behavior for slash/edit modes
+    is preserved). The chat shell listens for the event and calls
+    `stop()` if `status` is `"streaming"` or `"submitted"`.
+  - `?` → opens the shortcuts help dialog (when not typing).
+- Help dialog lists all bindings with key chips. `⌘/Ctrl + K` (P3
+  search palette) and `Enter` / `Shift+Enter` (already wired in
+  `prompt-input`) are documented but not re-implemented here.
+
+**Trade-offs**
+
+- `Cmd + ,` routes to `/settings/memory` (the only existing settings
+  page worth landing on). When we add a settings hub in P8/A1 we'll
+  retarget it without changing the binding.
+- Esc is intentionally ignored when focused on inputs — the chat
+  textarea already uses Esc for slash-menu close and edit-cancel, and
+  stealing those would break message editing.
+
 ### P6.1 — Export fidelity: emojis, tool calls, browser-print path
 
 Follow-up to P6 after a real-world export where the pizza-map carousel

@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { Toaster } from "sonner";
 import { AppSidebar } from "@/components/chat/app-sidebar";
 import { DataStreamProvider } from "@/components/chat/data-stream-provider";
+import { KeyboardShortcuts } from "@/components/chat/keyboard-shortcuts";
 import { SearchPalette } from "@/components/chat/search-palette";
 import { ChatShell } from "@/components/chat/shell";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -48,6 +49,7 @@ async function SidebarShell({ children }: { children: React.ReactNode }) {
           </ActiveChatProvider>
         </Suspense>
         <SearchPalette />
+        <KeyboardShortcuts />
         {children}
       </SidebarInset>
     </SidebarProvider>
