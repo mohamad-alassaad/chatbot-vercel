@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/app/(auth)/auth";
+import { SettingsTabs } from "@/components/chat/settings/settings-tabs";
 
 export default async function SettingsLayout({
   children,
@@ -28,14 +29,7 @@ export default async function SettingsLayout({
           ← Back to chat
         </Link>
       </header>
-      <nav className="flex gap-1 border-border/50 border-b">
-        <Link
-          className="border-primary border-b-2 px-3 py-2 font-medium text-sm"
-          href="/settings/memory"
-        >
-          Memory
-        </Link>
-      </nav>
+      <SettingsTabs />
       <main className="flex-1">{children}</main>
     </div>
   );

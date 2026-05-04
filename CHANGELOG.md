@@ -5,6 +5,43 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P2 — Custom Instructions (shipped)
+
+The schema fields and `systemPrompt` rendering already landed during P1. P2
+adds the UI to set them.
+
+**Added**
+
+- `/settings/custom-instructions` route with a server-component shell that
+  hydrates a client form ([components/chat/settings/custom-instructions-client.tsx](components/chat/settings/custom-instructions-client.tsx)).
+- Two textareas — "About me" and "How I want you to respond" — each capped
+  at 2000 characters with a live counter and over-cap validation.
+- Tone preference `<Select>` with five options
+  (Default / Concise / Detailed / Casual / Formal). Each option shows the
+  exact directive that gets injected into the system prompt via tooltip.
+- Save flow uses the existing `PUT /api/settings/memory` (already accepted
+  these fields). Whitespace-only inputs are stored as `null` so they don't
+  inject empty sections into the prompt.
+- Reset button reverts unsaved changes.
+- Multi-tab settings layout: extracted `<SettingsTabs>` (client component
+  reading `usePathname`) so the active tab highlights correctly. Tabs:
+  "Memory", "Custom instructions". Scales for P3+.
+
+**Tests**
+
+- 8 new Vitest cases covering each instruction-section combination, tone
+  directives, whitespace handling, and the interaction with the
+  memory-disabled path. Total Vitest: 22 passing.
+
+**Notes / trade-offs**
+
+- No project-level overrides yet; that lands in P4. Custom instructions are
+  user-level only.
+- No instruction history or version timeline. If you wipe a field by
+  mistake it's gone — Phase 0 scope.
+- Tone is intentionally coarse (5 buckets, not free-form). Anything finer
+  goes in `customInstructionsRespond`.
+
 ### P1 — Cross-conversation memory (shipped)
 
 **Added**
