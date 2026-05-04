@@ -2,22 +2,48 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/app/(auth)/auth";
 import { renderMessageBlocks } from "@/lib/chat/export";
 import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
-import { AutoPrintTrigger } from "./auto-print";
+import { PrintToolbar } from "./auto-print";
+import { PrintMcpUi } from "./print-mcp-ui";
 
-function asMcpUiHtml(part: unknown): string | null {
+type McpUiPart = {
+  toolName: string;
+  html: string;
+  text?: string;
+  structuredContent?: unknown;
+  input?: Record<string, unknown>;
+};
+
+function asMcpUiPart(part: unknown): McpUiPart | null {
   if (!part || typeof part !== "object") {
     return null;
   }
-  const output = (part as { output?: unknown }).output;
-  if (!output || typeof output !== "object") {
+  const p = part as {
+    type?: string;
+    toolName?: string;
+    input?: Record<string, unknown>;
+    output?: {
+      ui?: { html?: unknown };
+      text?: unknown;
+      structuredContent?: unknown;
+    };
+  };
+  const ui = p.output?.ui;
+  const html = ui && typeof ui === "object" ? ui.html : undefined;
+  if (typeof html !== "string" || html.length === 0) {
     return null;
   }
-  const ui = (output as { ui?: unknown }).ui;
-  if (!ui || typeof ui !== "object") {
-    return null;
-  }
-  const html = (ui as { html?: unknown }).html;
-  return typeof html === "string" && html.length > 0 ? html : null;
+  const toolName =
+    p.toolName ??
+    (typeof p.type === "string" && p.type.startsWith("tool-")
+      ? p.type.slice("tool-".length)
+      : "tool");
+  return {
+    toolName,
+    html,
+    text: typeof p.output?.text === "string" ? p.output.text : undefined,
+    structuredContent: p.output?.structuredContent,
+    input: p.input,
+  };
 }
 
 function timestamp(value: Date | string): string {
@@ -71,11 +97,10 @@ export default async function ChatPrintPage({
   iframe { border: 1px solid #e5e7eb !important; }
   @page { margin: 16mm; }
 }
-.mcp-frame { width: 100%; height: 480px; border: 1px solid #e5e7eb; border-radius: 6px; background: white; }
           `,
         }}
       />
-      <AutoPrintTrigger />
+      <PrintToolbar />
       <main className="mx-auto max-w-3xl px-6 py-8 font-sans text-zinc-900">
         <header className="mb-6 border-b border-zinc-200 pb-4">
           <h1 className="text-2xl font-bold">
@@ -92,15 +117,13 @@ export default async function ChatPrintPage({
         ) : (
           messages.map((m) => {
             const blocks = renderMessageBlocks(m.parts);
-            // Find any MCP-UI HTML in the original parts (block walker
-            // intentionally does not re-emit raw HTML).
-            const uiHtmls: string[] = Array.isArray(m.parts)
+            const uiParts: McpUiPart[] = Array.isArray(m.parts)
               ? (m.parts as unknown[])
-                  .map((p) => asMcpUiHtml(p))
-                  .filter((s): s is string => s !== null)
+                  .map((p) => asMcpUiPart(p))
+                  .filter((s): s is McpUiPart => s !== null)
               : [];
 
-            if (blocks.length === 0 && uiHtmls.length === 0) {
+            if (blocks.length === 0 && uiParts.length === 0) {
               return null;
             }
             return (
@@ -126,7 +149,7 @@ export default async function ChatPrintPage({
                     if (block.kind === "reasoning") {
                       return (
                         <blockquote
-                          className="border-l-2 border-zinc-300 pl-3 text-xs italic text-zinc-600 whitespace-pre-wrap"
+                          className="whitespace-pre-wrap border-l-2 border-zinc-300 pl-3 text-xs italic text-zinc-600"
                           key={key}
                         >
                           {block.body}
@@ -165,13 +188,14 @@ export default async function ChatPrintPage({
                       </div>
                     );
                   })}
-                  {uiHtmls.map((html, idx) => (
-                    <iframe
-                      className="mcp-frame"
+                  {uiParts.map((part, idx) => (
+                    <PrintMcpUi
+                      html={part.html}
+                      input={part.input}
                       key={`${m.id}-ui-${idx}`}
-                      sandbox="allow-scripts allow-same-origin"
-                      srcDoc={html}
-                      title={`Tool UI ${idx + 1}`}
+                      structuredContent={part.structuredContent}
+                      text={part.text}
+                      toolName={part.toolName}
                     />
                   ))}
                 </div>

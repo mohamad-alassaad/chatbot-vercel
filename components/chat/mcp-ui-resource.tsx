@@ -10,6 +10,7 @@ type MCPUIResourceProps = {
   toolInput?: Record<string, unknown>;
   structuredContent?: unknown;
   text?: string;
+  theme?: "light" | "dark";
 };
 
 const SANDBOX_PATH = "/mcp-sandbox.html?v=2";
@@ -47,6 +48,7 @@ export function MCPUIResource({
   toolInput,
   structuredContent,
   text,
+  theme = "dark",
 }: MCPUIResourceProps) {
   const sandbox = useMemo(
     () => ({ url: new URL(SANDBOX_PATH, window.location.origin) }),
@@ -110,11 +112,11 @@ export function MCPUIResource({
         maxWidth: CONTAINER_MAX_WIDTH,
         maxHeight: MAX_HEIGHT,
       },
-      theme: "dark" as const,
+      theme,
       locale: typeof navigator === "undefined" ? "en-US" : navigator.language,
       platform: "web" as const,
     }),
-    []
+    [theme]
   );
 
   // Force the AppFrame's outer iframe to fill the wrapper width and to track
