@@ -2,6 +2,7 @@ import "server-only";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js";
 import { dynamicTool, type JSONSchema7, jsonSchema } from "ai";
 import type { MCPToolOutput, MCPUIPayload } from "./types";
@@ -17,21 +18,51 @@ type ConnectedClient = {
 
 let connection: Promise<ConnectedClient> | null = null;
 
-async function connect(): Promise<ConnectedClient> {
-  const url = process.env.MCP_PIZZAZ_URL;
-  if (!url) {
-    throw new Error(
-      "MCP_PIZZAZ_URL is not set. Point it at the Pizzaz Node server SSE endpoint, e.g. http://localhost:8000/mcp"
-    );
-  }
-
+async function tryConnect(
+  url: URL,
+  transportKind: "streamable-http" | "sse"
+): Promise<Client> {
   const client = new Client(
     { name: "vercel-ai-chatbot", version: "0.1.0" },
     { capabilities: {} }
   );
-
-  const transport = new SSEClientTransport(new URL(url));
+  const transport =
+    transportKind === "streamable-http"
+      ? new StreamableHTTPClientTransport(url)
+      : new SSEClientTransport(url);
   await client.connect(transport);
+  return client;
+}
+
+async function connect(): Promise<ConnectedClient> {
+  const raw = process.env.MCP_PIZZAZ_URL;
+  if (!raw) {
+    throw new Error(
+      "MCP_PIZZAZ_URL is not set. Point it at the MCP server's HTTP endpoint, e.g. http://localhost:8000/mcp"
+    );
+  }
+  const url = new URL(raw);
+
+  // Try modern Streamable HTTP first (Python FastMCP, recent Node servers),
+  // fall back to legacy SSE (older servers like the Node Pizzaz example).
+  let client: Client;
+  let transportUsed: "streamable-http" | "sse";
+  try {
+    client = await tryConnect(url, "streamable-http");
+    transportUsed = "streamable-http";
+  } catch (httpErr) {
+    try {
+      client = await tryConnect(url, "sse");
+      transportUsed = "sse";
+    } catch (sseErr) {
+      console.warn("[mcp] both streamable-http and sse transports failed:", {
+        httpErr,
+        sseErr,
+      });
+      throw sseErr;
+    }
+  }
+  console.log(`[mcp] connected via ${transportUsed} to ${url.href}`);
 
   const { tools } = await client.listTools();
   const toolByName = new Map(tools.map((t) => [t.name, t]));
