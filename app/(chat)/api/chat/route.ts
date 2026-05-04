@@ -350,7 +350,17 @@ export async function POST(request: Request) {
         });
 
         dataStream.merge(
-          result.toUIMessageStream({ sendReasoning: isReasoningModel })
+          result.toUIMessageStream({
+            sendReasoning: isReasoningModel,
+            messageMetadata: ({ part }) => {
+              // P8 — surface output-token truncation so the UI can show a
+              // "Continue" button on the last assistant message.
+              if (part.type === "finish" && part.finishReason === "length") {
+                return { truncated: true };
+              }
+              return undefined;
+            },
+          })
         );
 
         if (titlePromise) {

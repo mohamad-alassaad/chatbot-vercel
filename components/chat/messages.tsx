@@ -1,10 +1,10 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
-import { ArrowDownIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, generateUUID } from "@/lib/utils";
 import { useDataStream } from "./data-stream-provider";
 import { Greeting } from "./greeting";
 import { PreviewMessage, ThinkingMessage } from "./message";
@@ -17,6 +17,7 @@ type MessagesProps = {
   messages: ChatMessage[];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   regenerate: UseChatHelpers<ChatMessage>["regenerate"];
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   isReadonly: boolean;
   isArtifactVisible: boolean;
   isLoading?: boolean;
@@ -32,6 +33,7 @@ function PureMessages({
   messages,
   setMessages,
   regenerate,
+  sendMessage,
   isReadonly,
   isArtifactVisible,
   isLoading,
@@ -62,8 +64,19 @@ function PureMessages({
   return (
     <div className="relative flex-1 bg-background">
       {messages.length === 0 && !isLoading && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-          <Greeting />
+        <div className="absolute inset-0 z-10 flex items-center justify-center">
+          <Greeting
+            onSelectPrompt={
+              isReadonly
+                ? undefined
+                : (text) =>
+                    sendMessage({
+                      id: generateUUID(),
+                      role: "user",
+                      parts: [{ type: "text", text }],
+                    })
+            }
+          />
         </div>
       )}
       <div
@@ -102,6 +115,41 @@ function PureMessages({
           {status === "submitted" && messages.at(-1)?.role !== "assistant" && (
             <ThinkingMessage />
           )}
+
+          {(() => {
+            const last = messages.at(-1);
+            const showContinue =
+              !isReadonly &&
+              status === "ready" &&
+              last?.role === "assistant" &&
+              (last.metadata as { truncated?: boolean } | undefined)?.truncated;
+            if (!showContinue) {
+              return null;
+            }
+            return (
+              <div className="flex justify-start px-4 md:px-6">
+                <button
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-[var(--shadow-float)] transition-colors hover:bg-accent hover:text-accent-foreground"
+                  onClick={() =>
+                    sendMessage({
+                      id: generateUUID(),
+                      role: "user",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "Please continue exactly from where you left off without repeating yourself.",
+                        },
+                      ],
+                    })
+                  }
+                  type="button"
+                >
+                  <ArrowRightIcon className="size-3.5" />
+                  Continue
+                </button>
+              </div>
+            );
+          })()}
 
           <div
             className="min-h-[24px] min-w-[24px] shrink-0"

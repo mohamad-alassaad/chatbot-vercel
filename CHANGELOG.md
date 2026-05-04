@@ -5,6 +5,49 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P8 — Polish QoL (shipped)
+
+Three small UX upgrades that finish the daily-use surface.
+
+**1. Continue button (truncated responses).** When the model stops with
+`finishReason === "length"` (output-token cap), the chat now exposes a
+"Continue" pill under the last assistant message that re-prompts the
+model to pick up where it left off.
+
+- `messageMetadataSchema` extended with optional `truncated: boolean`.
+- `result.toUIMessageStream({ messageMetadata })` in the chat route
+  attaches `{ truncated: true }` whenever the finish event reports
+  `length`.
+- `<Messages>` reads `last.metadata.truncated` and, when status is
+  `"ready"` and the user isn't readonly, renders a small "Continue"
+  button that calls `sendMessage` with a clear continuation hint.
+- Caveat: metadata isn't persisted to `Message_v2` yet, so the button
+  only shows in the live session. Persisting is a one-line schema add
+  if needed; deferred to Phase A1.
+
+**2. Dynamic chat title.** *Already shipped before P8 — verified.*
+`generateTitleFromUserMessage()` in `app/(chat)/actions.ts` runs the
+title model with `titlePrompt`, post-processes the output, persists via
+`updateChatTitleById`, and the chat route awaits the title promise and
+streams `data-chat-title`. No change needed.
+
+**3. Better empty state.** Replaced the bare "What can I help with?"
+greeting with an inviting onboarding card:
+- Same headline.
+- 4 clickable starter prompts (weather / map carousel / tsvector /
+  project planning) — clicking one calls `sendMessage` to kick off
+  the chat.
+- A 4-tip footer (memory across chats, ⌘K full-text search, project
+  drag-drop, ? for shortcuts) that surfaces P1–P7 features people
+  would otherwise miss.
+
+**Tests / verify**
+
+- 70/70 unit tests pass; typecheck clean; biome clean. No new tests
+  added — Continue + greeting are presentational and best validated
+  with a manual smoke (no determinism around `finishReason` in unit
+  tests without a fake provider, which is more cost than value here).
+
 ### P7 — Keyboard shortcuts (shipped)
 
 A global keymap covering the daily-use loop, with a `?`-triggered help

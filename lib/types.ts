@@ -9,7 +9,10 @@ import type { updateDocument } from "./ai/tools/update-document";
 import type { Suggestion } from "./db/schema";
 
 export const messageMetadataSchema = z.object({
-  createdAt: z.string(),
+  createdAt: z.string().optional(),
+  // P8 — set to true when the model stopped because of an output-token
+  // limit, so the UI can offer a "Continue" button.
+  truncated: z.boolean().optional(),
 });
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
