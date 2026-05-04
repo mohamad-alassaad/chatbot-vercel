@@ -126,22 +126,49 @@ function renderCustomInstructions(input: MemoryPromptInput): string {
   return sections.join("\n\n");
 }
 
+export type ProjectPromptInput = {
+  name?: string | null;
+  systemPrompt?: string | null;
+};
+
+function renderProjectSection(input: ProjectPromptInput | undefined): string {
+  if (!input) {
+    return "";
+  }
+  const trimmed = input.systemPrompt?.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const namePart = input.name?.trim()
+    ? ` name="${input.name.trim().replace(/"/g, "&quot;")}"`
+    : "";
+  return `<project_context${namePart}>\n${trimmed}\n</project_context>`;
+}
+
 export const systemPrompt = ({
   requestHints,
   supportsTools,
   memory,
+  project,
 }: {
   requestHints: RequestHints;
   supportsTools: boolean;
   memory?: MemoryPromptInput;
+  project?: ProjectPromptInput;
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
   const customInstructions = memory ? renderCustomInstructions(memory) : "";
+  const projectSection = renderProjectSection(project);
   const memoriesSection = memory?.memoryEnabled
     ? renderMemoriesSection(memory.memories)
     : "";
 
-  const head = [regularPrompt, customInstructions, memoriesSection]
+  const head = [
+    regularPrompt,
+    customInstructions,
+    projectSection,
+    memoriesSection,
+  ]
     .filter(Boolean)
     .join("\n\n");
 

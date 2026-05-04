@@ -10,6 +10,7 @@ import {
   gt,
   gte,
   inArray,
+  isNull,
   lt,
   type SQL,
   sql,
@@ -26,6 +27,8 @@ import {
   type DBMessage,
   document,
   message,
+  type Project,
+  project,
   type Suggestion,
   stream,
   suggestion,
@@ -85,11 +88,13 @@ export async function saveChat({
   userId,
   title,
   visibility,
+  projectId,
 }: {
   id: string;
   userId: string;
   title: string;
   visibility: VisibilityType;
+  projectId?: string | null;
 }) {
   try {
     return await db.insert(chat).values({
@@ -98,6 +103,7 @@ export async function saveChat({
       userId,
       title,
       visibility,
+      projectId: projectId ?? null,
     });
   } catch (_error) {
     throw new ChatbotError("bad_request:database", "Failed to save chat");
@@ -1075,6 +1081,271 @@ export async function deleteAllMemories({
     throw new ChatbotError(
       "bad_request:database",
       "Failed to delete all memories"
+    );
+  }
+}
+
+// --- Projects (Phase 0 / P4) -------------------------------------------------
+
+const PROJECT_NAME_MAX = 80;
+const PROJECT_DESC_MAX = 280;
+const PROJECT_PROMPT_MAX = 4000;
+const PROJECT_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+function sanitizeProjectColor(color: string | null | undefined): string | null {
+  if (!color) {
+    return null;
+  }
+  return PROJECT_COLOR_RE.test(color) ? color : null;
+}
+
+export async function createProject({
+  userId,
+  tenantId,
+  name,
+  description,
+  systemPrompt,
+  color,
+}: {
+  userId: string;
+  tenantId?: string | null;
+  name: string;
+  description?: string | null;
+  systemPrompt?: string | null;
+  color?: string | null;
+}): Promise<Project> {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) {
+    throw new ChatbotError("bad_request:api", "Project name is required");
+  }
+  try {
+    const [created] = await db
+      .insert(project)
+      .values({
+        userId,
+        tenantId: tenantId ?? null,
+        name: trimmedName.slice(0, PROJECT_NAME_MAX),
+        description: description?.trim().slice(0, PROJECT_DESC_MAX) || null,
+        systemPrompt: systemPrompt?.trim().slice(0, PROJECT_PROMPT_MAX) || null,
+        color: sanitizeProjectColor(color),
+      })
+      .returning();
+    return created;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to create project");
+  }
+}
+
+export async function listProjectsByUserId({
+  userId,
+  tenantId,
+}: {
+  userId: string;
+  tenantId?: string | null;
+}): Promise<Project[]> {
+  try {
+    const tenantClause =
+      tenantId === undefined
+        ? null
+        : tenantId === null
+          ? isNull(project.tenantId)
+          : eq(project.tenantId, tenantId);
+    const where = tenantClause
+      ? and(eq(project.userId, userId), tenantClause)
+      : eq(project.userId, userId);
+    return await db
+      .select()
+      .from(project)
+      .where(where)
+      .orderBy(asc(project.name));
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to list projects");
+  }
+}
+
+export async function getProjectById({
+  id,
+  userId,
+}: {
+  id: string;
+  userId: string;
+}): Promise<Project | null> {
+  try {
+    const [row] = await db
+      .select()
+      .from(project)
+      .where(and(eq(project.id, id), eq(project.userId, userId)))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to load project");
+  }
+}
+
+export async function updateProject({
+  id,
+  userId,
+  patch,
+}: {
+  id: string;
+  userId: string;
+  patch: {
+    name?: string;
+    description?: string | null;
+    systemPrompt?: string | null;
+    color?: string | null;
+  };
+}): Promise<Project> {
+  const updates: Partial<typeof project.$inferInsert> = {
+    updatedAt: new Date(),
+  };
+  if (patch.name !== undefined) {
+    const trimmed = patch.name.trim();
+    if (trimmed.length === 0) {
+      throw new ChatbotError("bad_request:api", "Project name is required");
+    }
+    updates.name = trimmed.slice(0, PROJECT_NAME_MAX);
+  }
+  if (patch.description !== undefined) {
+    updates.description =
+      patch.description?.trim().slice(0, PROJECT_DESC_MAX) || null;
+  }
+  if (patch.systemPrompt !== undefined) {
+    updates.systemPrompt =
+      patch.systemPrompt?.trim().slice(0, PROJECT_PROMPT_MAX) || null;
+  }
+  if (patch.color !== undefined) {
+    updates.color = sanitizeProjectColor(patch.color);
+  }
+  try {
+    const [updated] = await db
+      .update(project)
+      .set(updates)
+      .where(and(eq(project.id, id), eq(project.userId, userId)))
+      .returning();
+    if (!updated) {
+      throw new ChatbotError("not_found:database", "Project not found");
+    }
+    return updated;
+  } catch (error) {
+    if (error instanceof ChatbotError) {
+      throw error;
+    }
+    throw new ChatbotError("bad_request:database", "Failed to update project");
+  }
+}
+
+export async function deleteProject({
+  id,
+  userId,
+}: {
+  id: string;
+  userId: string;
+}): Promise<{ deleted: boolean; unfolderedChatIds: string[] }> {
+  try {
+    const owned = await getProjectById({ id, userId });
+    if (!owned) {
+      return { deleted: false, unfolderedChatIds: [] };
+    }
+    const unfoldered = await db
+      .update(chat)
+      .set({ projectId: null })
+      .where(and(eq(chat.projectId, id), eq(chat.userId, userId)))
+      .returning({ id: chat.id });
+    await db.delete(project).where(eq(project.id, id));
+    return {
+      deleted: true,
+      unfolderedChatIds: unfoldered.map((c) => c.id),
+    };
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to delete project");
+  }
+}
+
+export async function setChatProject({
+  chatId,
+  userId,
+  projectId,
+}: {
+  chatId: string;
+  userId: string;
+  projectId: string | null;
+}): Promise<Chat> {
+  try {
+    if (projectId !== null) {
+      const owned = await getProjectById({ id: projectId, userId });
+      if (!owned) {
+        throw new ChatbotError("forbidden:api", "Project not found");
+      }
+    }
+    const [updated] = await db
+      .update(chat)
+      .set({ projectId })
+      .where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+      .returning();
+    if (!updated) {
+      throw new ChatbotError("not_found:database", "Chat not found");
+    }
+    return updated;
+  } catch (error) {
+    if (error instanceof ChatbotError) {
+      throw error;
+    }
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to move chat to project"
+    );
+  }
+}
+
+export async function getProjectByChatId({
+  chatId,
+  userId,
+}: {
+  chatId: string;
+  userId: string;
+}): Promise<Project | null> {
+  try {
+    const [row] = await db
+      .select({ project })
+      .from(chat)
+      .innerJoin(project, eq(chat.projectId, project.id))
+      .where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+      .limit(1);
+    return row?.project ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to load project for chat"
+    );
+  }
+}
+
+export async function getChatCountsByProject({
+  userId,
+}: {
+  userId: string;
+}): Promise<Record<string, number>> {
+  try {
+    const rows = await db
+      .select({
+        projectId: chat.projectId,
+        n: count(chat.id),
+      })
+      .from(chat)
+      .where(eq(chat.userId, userId))
+      .groupBy(chat.projectId);
+    const out: Record<string, number> = {};
+    for (const r of rows) {
+      if (r.projectId) {
+        out[r.projectId] = Number(r.n);
+      }
+    }
+    return out;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to count chats per project"
     );
   }
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useDroppable } from "@dnd-kit/core";
 import { isToday, isYesterday, subMonths, subWeeks } from "date-fns";
 import { motion } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
@@ -102,6 +103,10 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
   const { setOpenMobile } = useSidebar();
   const pathname = usePathname();
   const id = pathname?.startsWith("/chat/") ? pathname.split("/")[2] : null;
+  const { isOver, setNodeRef } = useDroppable({
+    id: "project:none",
+    data: { kind: "project", projectId: null },
+  });
 
   const {
     data: paginatedChatHistories,
@@ -123,9 +128,11 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
     ? paginatedChatHistories.some((page) => page.hasMore === false)
     : false;
 
-  const hasEmptyChatHistory = paginatedChatHistories
-    ? paginatedChatHistories.every((page) => page.chats.length === 0)
-    : false;
+  const allChats = paginatedChatHistories
+    ? paginatedChatHistories.flatMap((p) => p.chats)
+    : [];
+  const unsortedChats = allChats.filter((c) => !c.projectId);
+  const hasEmptyChatHistory = unsortedChats.length === 0;
 
   const handleDelete = () => {
     const chatToDelete = deleteId;
@@ -197,13 +204,20 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
 
   if (hasEmptyChatHistory) {
     return (
-      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+      <SidebarGroup
+        className={`group-data-[collapsible=icon]:hidden rounded-md transition-colors ${
+          isOver ? "bg-sidebar-accent/50 ring-1 ring-sidebar-accent" : ""
+        }`}
+        ref={setNodeRef}
+      >
         <SidebarGroupLabel className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/70">
-          History
+          Unsorted
         </SidebarGroupLabel>
         <SidebarGroupContent>
-          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-[13px] text-sidebar-foreground/60">
-            Your conversations will appear here once you start chatting!
+          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 py-1.5 text-[12px] text-sidebar-foreground/50">
+            {allChats.length === 0
+              ? "Your conversations will appear here once you start chatting!"
+              : "All chats are inside projects. Drop here to un-folder."}
           </div>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -212,19 +226,20 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
 
   return (
     <>
-      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+      <SidebarGroup
+        className={`group-data-[collapsible=icon]:hidden rounded-md transition-colors ${
+          isOver ? "bg-sidebar-accent/50 ring-1 ring-sidebar-accent" : ""
+        }`}
+        ref={setNodeRef}
+      >
         <SidebarGroupLabel className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/70">
-          History
+          Unsorted
         </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             {paginatedChatHistories &&
               (() => {
-                const chatsFromHistory = paginatedChatHistories.flatMap(
-                  (paginatedChatHistory) => paginatedChatHistory.chats
-                );
-
-                const groupedChats = groupChatsByDate(chatsFromHistory);
+                const groupedChats = groupChatsByDate(unsortedChats);
 
                 return (
                   <div className="flex flex-col gap-4">

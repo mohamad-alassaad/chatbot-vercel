@@ -40,7 +40,7 @@ export function SearchPalette() {
   const inflight = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Cmd+K (or Ctrl+K) toggles the palette.
+  // Cmd+K (or Ctrl+K) toggles the palette; custom event opens it from elsewhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isToggle =
@@ -50,8 +50,13 @@ export function SearchPalette() {
         setOpen((prev) => !prev);
       }
     };
+    const onOpen = () => setOpen(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("open-search-palette", onOpen);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("open-search-palette", onOpen);
+    };
   }, []);
 
   // Reset transient state on close so reopening starts fresh.

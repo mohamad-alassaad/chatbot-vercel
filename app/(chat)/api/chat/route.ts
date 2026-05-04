@@ -40,6 +40,7 @@ import {
   getMessageCountByUserId,
   getMessagesByChatId,
   getOrCreateUserSettings,
+  getProjectByChatId,
   recallMemories,
   saveChat,
   saveMessages,
@@ -77,8 +78,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { id, message, messages, selectedChatModel, selectedVisibilityType } =
-      requestBody;
+    const {
+      id,
+      message,
+      messages,
+      selectedChatModel,
+      selectedVisibilityType,
+      projectId,
+    } = requestBody;
 
     const [, session] = await Promise.all([
       checkBotId().catch(() => null),
@@ -123,6 +130,7 @@ export async function POST(request: Request) {
         userId: session.user.id,
         title: "New chat",
         visibility: selectedVisibilityType,
+        projectId: projectId ?? null,
       });
       titlePromise = generateTitleFromUserMessage({
         message,
@@ -244,6 +252,15 @@ export async function POST(request: Request) {
       memoryEnabled,
     };
 
+    // Phase 0 / P4 — pull project's system-prompt if this chat is foldered.
+    const projectForPrompt = await getProjectByChatId({
+      chatId: id,
+      userId: session.user.id,
+    }).catch((err) => {
+      console.warn("Project prompt lookup failed:", err);
+      return null;
+    });
+
     const manageMemoryTool = createManageMemoryTool({
       userId: session.user.id,
       tenantId: settings.tenantId ?? null,
@@ -261,6 +278,12 @@ export async function POST(request: Request) {
             requestHints,
             supportsTools,
             memory: memoryPromptInput,
+            project: projectForPrompt
+              ? {
+                  name: projectForPrompt.name,
+                  systemPrompt: projectForPrompt.systemPrompt,
+                }
+              : undefined,
           }),
           messages: modelMessages,
           stopWhen: stepCountIs(5),

@@ -28,6 +28,22 @@ export const user = pgTable("User", {
 
 export type User = InferSelectModel<typeof user>;
 
+export const project = pgTable("Project", {
+  id: uuid("id").primaryKey().notNull().defaultRandom(),
+  userId: uuid("userId")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  tenantId: uuid("tenantId"),
+  name: text("name").notNull(),
+  description: text("description"),
+  systemPrompt: text("systemPrompt"),
+  color: varchar("color", { length: 7 }),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
+export type Project = InferSelectModel<typeof project>;
+
 export const chat = pgTable("Chat", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
   createdAt: timestamp("createdAt").notNull(),
@@ -35,6 +51,9 @@ export const chat = pgTable("Chat", {
   userId: uuid("userId")
     .notNull()
     .references(() => user.id),
+  projectId: uuid("projectId").references(() => project.id, {
+    onDelete: "set null",
+  }),
   visibility: varchar("visibility", { enum: ["public", "private"] })
     .notNull()
     .default("private"),

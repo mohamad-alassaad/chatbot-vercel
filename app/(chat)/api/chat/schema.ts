@@ -32,6 +32,7 @@ export const postRequestBodySchema = z.object({
   messages: z.array(toolApprovalMessageSchema).optional(),
   selectedChatModel: z.string(),
   selectedVisibilityType: z.enum(["public", "private"]),
+  projectId: z.string().uuid().nullable().optional(),
 });
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;

@@ -5,6 +5,66 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P4 — Folders / Projects (shipped)
+
+Group related chats into projects with optional project-level instructions
+that are appended to the system prompt of every chat inside.
+
+**Added**
+
+- Migration `0003_projects.sql`: new `Project` table (`id`, `userId`,
+  `tenantId` nullable, `name`, `description`, `systemPrompt`, `color`,
+  `createdAt`, `updatedAt`) and a nullable `projectId` FK on `Chat` with
+  `ON DELETE SET NULL` (chats fall back to "Unsorted" when a project is
+  deleted). Indexes on `Project(userId)`, `Project(userId, tenantId)`,
+  and `Chat(projectId)`.
+- Tenant-aware-ready query helpers in `lib/db/queries.ts`:
+  `createProject`, `listProjectsByUserId`, `getProjectById`,
+  `updateProject`, `deleteProject` (un-folders chats then drops the
+  project), `setChatProject` (auth-checked), `getProjectByChatId`,
+  `getChatCountsByProject`. Every query takes `userId` as mandatory and
+  `tenantId` as optional.
+- `saveChat` accepts an optional `projectId` so a chat can be born inside
+  a project (used when the request body includes one).
+- API routes:
+  - `GET/POST /api/projects` — list (with chat counts) + create.
+  - `PATCH/DELETE /api/projects/:id` — update fields / delete + un-folder.
+  - `PATCH /api/chats/:id/project` — move a chat in/out of a project.
+- System-prompt composition: `systemPrompt()` now accepts an optional
+  `project: { name, systemPrompt }`. When set, it renders a
+  `<project_context name="…">…</project_context>` section between custom
+  instructions and memories. The chat route looks up the project for the
+  active chat and threads it through.
+- Sidebar UX (`components/chat/sidebar-projects.tsx`,
+  `components/chat/app-sidebar.tsx`):
+  - Projects group above the unsorted history, each row collapsible with
+    a colored dot, chat count, and edit/delete dropdown.
+  - Drag-and-drop via `@dnd-kit/core` (`PointerSensor`,
+    `activationConstraint: { distance: 8 }` so clicks still work). Drag
+    a chat onto any project row or onto the "Unsorted" group to re-folder.
+    Optimistic SWR update with rollback on failure.
+  - "Unsorted" replaces the old "History" header for chats with
+    `projectId IS NULL`.
+- `<ProjectEditDialog>` for create/edit with name, description,
+  system-prompt textarea (max 4000 chars), and an 8-color preset picker.
+
+**Tests**
+
+- `tests/unit/project-prompt.test.ts` (6 tests): no-render conditions,
+  attribute-quote escaping, ordering vs custom instructions and memories,
+  project-renders-when-memory-disabled.
+- All 40 unit tests pass; `pnpm exec tsc --noEmit` clean; ultracite clean.
+
+**Trade-offs**
+
+- DnD via `@dnd-kit/core` (~12 KB) over native HTML5 DnD: better UX with
+  sidebar overflow, accessible, React 19 friendly.
+- Project deletion un-folders chats rather than cascading — destructive
+  click should not nuke conversations.
+- One project per chat (no many-to-many) until a UX requirement appears.
+- `tenantId` is in the schema but not enforced; queries already accept
+  it so Phase A1 is a one-line tightening.
+
 ### P3 — Full-text search across conversations (shipped)
 
 Replaces the title-only search with content-based search across every

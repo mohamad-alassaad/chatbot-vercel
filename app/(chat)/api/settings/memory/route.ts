@@ -8,8 +8,6 @@ import {
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 
-export const dynamic = "force-dynamic";
-
 const settingsPatchSchema = z.object({
   memoryEnabled: z.boolean().optional(),
   customInstructionsAbout: z.string().max(2000).nullable().optional(),

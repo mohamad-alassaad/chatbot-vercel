@@ -3,8 +3,6 @@ import { auth } from "@/app/(auth)/auth";
 import { CustomInstructionsClient } from "@/components/chat/settings/custom-instructions-client";
 import { getOrCreateUserSettings } from "@/lib/db/queries";
 
-export const dynamic = "force-dynamic";
-
 export default async function CustomInstructionsSettingsPage() {
   const session = await auth();
   if (!session?.user) {

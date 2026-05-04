@@ -3,8 +3,6 @@ import { searchMessages } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 import { buildSnippet, extractText } from "@/lib/search/snippet";
 
-export const dynamic = "force-dynamic";
-
 export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user) {
