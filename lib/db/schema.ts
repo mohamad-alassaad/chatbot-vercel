@@ -54,6 +54,7 @@ export const chat = pgTable("Chat", {
   projectId: uuid("projectId").references(() => project.id, {
     onDelete: "set null",
   }),
+  pinnedAt: timestamp("pinnedAt"),
   visibility: varchar("visibility", { enum: ["public", "private"] })
     .notNull()
     .default("private"),

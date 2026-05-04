@@ -1262,6 +1262,33 @@ export async function deleteProject({
   }
 }
 
+export async function setChatPin({
+  chatId,
+  userId,
+  pinned,
+}: {
+  chatId: string;
+  userId: string;
+  pinned: boolean;
+}): Promise<Chat> {
+  try {
+    const [updated] = await db
+      .update(chat)
+      .set({ pinnedAt: pinned ? new Date() : null })
+      .where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+      .returning();
+    if (!updated) {
+      throw new ChatbotError("not_found:database", "Chat not found");
+    }
+    return updated;
+  } catch (error) {
+    if (error instanceof ChatbotError) {
+      throw error;
+    }
+    throw new ChatbotError("bad_request:database", "Failed to update pin");
+  }
+}
+
 export async function setChatProject({
   chatId,
   userId,

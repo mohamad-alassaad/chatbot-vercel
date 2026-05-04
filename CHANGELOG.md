@@ -5,6 +5,36 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P5 — Pinned conversations (shipped)
+
+Pin chats to keep them at the top of their bucket — works inside both
+projects and the Unsorted history.
+
+**Added**
+
+- Migration `0004_chat_pinned.sql`: nullable `Chat.pinnedAt` timestamp +
+  partial index `(userId, pinnedAt) WHERE pinnedAt IS NOT NULL` so pin
+  lookups stay cheap even when most chats are unpinned.
+- `setChatPin({ chatId, userId, pinned })` in `lib/db/queries.ts` —
+  auth-checked toggle that sets `pinnedAt = now()` or `null`.
+- `PATCH /api/chats/:id/pin` accepting `{ pinned: boolean }`.
+- `lib/chat/pin.ts`: pure helpers `isPinned()` and `partitionPinned()`
+  (sorts pinned chats by `pinnedAt` desc, leaves the rest in input
+  order so date-grouping stays intact).
+- Sidebar UX:
+  - Pin/Unpin entry at the top of each chat row's dropdown menu.
+  - "Pinned" sub-group rendered at the top of Unsorted (above Today /
+    Yesterday / etc.) and at the top of every project.
+  - Small rotated pin glyph next to the title when a chat is pinned.
+  - Optimistic SWR update with rollback on failure; success/error toast.
+
+**Tests**
+
+- `tests/unit/pin.test.ts` (8 tests): `isPinned` for null/undefined/Date/
+  string inputs, `partitionPinned` ordering and order-preservation,
+  mixed lists, and string-vs-Date sort parity.
+- 48/48 unit tests pass; typecheck clean; biome clean on touched files.
+
 ### P4 — Folders / Projects (shipped)
 
 Group related chats into projects with optional project-level instructions

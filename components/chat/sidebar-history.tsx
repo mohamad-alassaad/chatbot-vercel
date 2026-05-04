@@ -25,6 +25,7 @@ import {
   SidebarMenu,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { partitionPinned } from "@/lib/chat/pin";
 import type { Chat } from "@/lib/db/schema";
 import { fetcher } from "@/lib/utils";
 import { LoaderIcon } from "./icons";
@@ -239,10 +240,30 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
           <SidebarMenu>
             {paginatedChatHistories &&
               (() => {
-                const groupedChats = groupChatsByDate(unsortedChats);
+                const { pinned, rest } = partitionPinned(unsortedChats);
+                const groupedChats = groupChatsByDate(rest);
 
                 return (
                   <div className="flex flex-col gap-4">
+                    {pinned.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/70">
+                          Pinned
+                        </div>
+                        {pinned.map((chat) => (
+                          <ChatItem
+                            chat={chat}
+                            isActive={chat.id === id}
+                            key={chat.id}
+                            onDelete={(chatId) => {
+                              setDeleteId(chatId);
+                              setShowDeleteDialog(true);
+                            }}
+                            setOpenMobile={setOpenMobile}
+                          />
+                        ))}
+                      </div>
+                    )}
                     {groupedChats.today.length > 0 && (
                       <div>
                         <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/70">

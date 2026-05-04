@@ -36,6 +36,7 @@ import {
   useProjects,
   useProjectsRefresh,
 } from "@/hooks/use-projects";
+import { partitionPinned } from "@/lib/chat/pin";
 import type { Chat } from "@/lib/db/schema";
 import { fetcher } from "@/lib/utils";
 import { MoreHorizontalIcon } from "./icons";
@@ -131,15 +132,18 @@ function ProjectRow({
             </div>
           ) : (
             <SidebarMenu>
-              {chats.map((chat) => (
-                <ChatItem
-                  chat={chat}
-                  isActive={chat.id === isActiveChatId}
-                  key={chat.id}
-                  onDelete={onChatDelete}
-                  setOpenMobile={setOpenMobile}
-                />
-              ))}
+              {(() => {
+                const { pinned, rest } = partitionPinned(chats);
+                return [...pinned, ...rest].map((chat) => (
+                  <ChatItem
+                    chat={chat}
+                    isActive={chat.id === isActiveChatId}
+                    key={chat.id}
+                    onDelete={onChatDelete}
+                    setOpenMobile={setOpenMobile}
+                  />
+                ));
+              })()}
             </SidebarMenu>
           )}
         </div>
