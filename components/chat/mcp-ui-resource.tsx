@@ -16,7 +16,6 @@ const SANDBOX_PATH = "/mcp-sandbox.html?v=2";
 const DEFAULT_HEIGHT = 520;
 const MAX_HEIGHT = 1400;
 const CONTAINER_MAX_WIDTH = 920;
-const IFRAME_CONTENT_WIDTH = 1280;
 
 async function callMcpProxy(
   toolName: string,
@@ -105,8 +104,10 @@ export function MCPUIResource({
       availableDisplayModes: ["inline", "fullscreen"] as Array<
         "inline" | "fullscreen" | "pip"
       >,
+      // Tell the widget the real space it has so it can lay itself out
+      // correctly (carousel internal scroll, solar-system canvas size, etc.).
       containerDimensions: {
-        maxWidth: IFRAME_CONTENT_WIDTH,
+        maxWidth: CONTAINER_MAX_WIDTH,
         maxHeight: MAX_HEIGHT,
       },
       theme: "dark" as const,
@@ -116,6 +117,9 @@ export function MCPUIResource({
     []
   );
 
+  // Force the AppFrame's outer iframe to fill the wrapper width and to track
+  // the height the widget reports via onSizeChanged. AppFrame's defaults are
+  // 100% width and a hard-coded 600px height, which we override here.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) {
@@ -126,10 +130,9 @@ export function MCPUIResource({
       const iframe = el.querySelector("iframe");
       if (iframe) {
         iframe.style.height = `${height}px`;
-        iframe.style.width = `${IFRAME_CONTENT_WIDTH}px`;
-        iframe.style.minWidth = `${IFRAME_CONTENT_WIDTH}px`;
-        iframe.style.maxWidth = "none";
-        iframe.style.flex = "0 0 auto";
+        iframe.style.width = "100%";
+        iframe.style.minWidth = "0";
+        iframe.style.maxWidth = "100%";
         return true;
       }
       return false;
@@ -162,40 +165,26 @@ export function MCPUIResource({
     return () => window.removeEventListener("unhandledrejection", handler);
   }, []);
 
-  const scrollByPx = useCallback((dx: number) => {
-    const el = containerRef.current;
-    if (!el) {
-      return;
-    }
-    el.scrollBy({ left: dx, behavior: "smooth" });
-  }, []);
-
   return (
     <div
-      className="relative"
+      className="overflow-hidden rounded-xl border border-border/50 bg-card shadow-[var(--shadow-card)]"
+      ref={containerRef}
       style={{
         width: "100%",
         maxWidth: `${CONTAINER_MAX_WIDTH}px`,
         minWidth: 0,
+        minHeight: `${height}px`,
       }}
     >
-      <div
-        className="mcp-ui-scroll overflow-x-auto overflow-y-hidden rounded-xl border border-border/50 bg-card shadow-[var(--shadow-card)]"
-        ref={containerRef}
-        style={{
-          minHeight: `${height}px`,
-          touchAction: "pan-x pan-y",
-          overscrollBehaviorX: "contain",
-        }}
-      >
-        <style>{`
-        .mcp-ui-scroll { scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.45) rgba(0,0,0,0.15); }
-        .mcp-ui-scroll::-webkit-scrollbar { height: 12px; -webkit-appearance: none; display: block; }
-        .mcp-ui-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.15); border-radius: 6px; }
-        .mcp-ui-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.45); border-radius: 6px; }
-        .mcp-ui-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.7); }
-        .mcp-ui-scroll iframe { width: ${IFRAME_CONTENT_WIDTH}px !important; min-width: ${IFRAME_CONTENT_WIDTH}px !important; max-width: none !important; }
+      <style>{`
+        /* Iframe must allow native pointer/touch events so widgets like
+           Three.js OrbitControls receive mousedown/move/up uninterrupted. */
+        .mcp-ui-resource-iframe iframe {
+          touch-action: auto !important;
+          pointer-events: auto !important;
+        }
       `}</style>
+      <div className="mcp-ui-resource-iframe">
         <AppRenderer
           hostContext={hostContext}
           html={html}
@@ -208,26 +197,6 @@ export function MCPUIResource({
           toolName={toolName}
           toolResult={toolResult}
         />
-      </div>
-      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-1">
-        <button
-          aria-label="Scroll left"
-          className="pointer-events-auto flex size-8 items-center justify-center rounded-full bg-black/60 text-white shadow-[var(--shadow-float)] backdrop-blur-sm transition-colors hover:bg-black/80"
-          onClick={() => scrollByPx(-400)}
-          type="button"
-        >
-          ◀
-        </button>
-      </div>
-      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-1">
-        <button
-          aria-label="Scroll right"
-          className="pointer-events-auto flex size-8 items-center justify-center rounded-full bg-black/60 text-white shadow-[var(--shadow-float)] backdrop-blur-sm transition-colors hover:bg-black/80"
-          onClick={() => scrollByPx(400)}
-          type="button"
-        >
-          ▶
-        </button>
       </div>
     </div>
   );
