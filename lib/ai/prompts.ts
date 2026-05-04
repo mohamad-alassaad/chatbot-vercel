@@ -1,5 +1,6 @@
 import type { Geo } from "@vercel/functions";
 import type { ArtifactKind } from "@/components/chat/artifact";
+import type { MemoryHit } from "@/lib/db/queries";
 
 export const artifactsPrompt = `
 Artifacts is a side panel that displays content alongside the conversation. It supports scripts (code), documents (text), and spreadsheets. Changes appear in real-time.
@@ -63,20 +64,92 @@ About the origin of user's request:
 - country: ${requestHints.country}
 `;
 
+// Phase 0 / P1 — memory + custom-instructions rendering.
+
+const MEMORY_TOKEN_BUDGET_CHARS = 3200; // ~800 tokens, see DECISIONS.md
+
+export type ToneKey = "concise" | "detailed" | "casual" | "formal" | "default";
+
+const tonePrompt: Record<Exclude<ToneKey, "default">, string> = {
+  concise: "Tone: be terse and direct. No hedging, no filler.",
+  detailed: "Tone: be thorough and explanatory; show your reasoning.",
+  casual: "Tone: be casual and conversational.",
+  formal: "Tone: be formal and professional.",
+};
+
+export type MemoryPromptInput = {
+  memories?: MemoryHit[];
+  customInstructionsAbout?: string | null;
+  customInstructionsRespond?: string | null;
+  tonePreference?: ToneKey;
+  memoryEnabled?: boolean;
+};
+
+function renderMemoriesSection(memories: MemoryHit[] | undefined): string {
+  if (!memories || memories.length === 0) {
+    return "";
+  }
+  const lines: string[] = [];
+  let used = 0;
+  for (const m of memories) {
+    const line = `- (${m.category}) ${m.content}`;
+    if (used + line.length > MEMORY_TOKEN_BUDGET_CHARS) {
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  if (lines.length === 0) {
+    return "";
+  }
+  return `<memories>
+The following are durable facts you've previously stored about this user. Treat them as background context; only mention them when relevant.
+${lines.join("\n")}
+</memories>`;
+}
+
+function renderCustomInstructions(input: MemoryPromptInput): string {
+  const sections: string[] = [];
+  if (input.customInstructionsAbout?.trim()) {
+    sections.push(
+      `<about_user>\n${input.customInstructionsAbout.trim()}\n</about_user>`
+    );
+  }
+  if (input.customInstructionsRespond?.trim()) {
+    sections.push(
+      `<response_preferences>\n${input.customInstructionsRespond.trim()}\n</response_preferences>`
+    );
+  }
+  if (input.tonePreference && input.tonePreference !== "default") {
+    sections.push(tonePrompt[input.tonePreference]);
+  }
+  return sections.join("\n\n");
+}
+
 export const systemPrompt = ({
   requestHints,
   supportsTools,
+  memory,
 }: {
   requestHints: RequestHints;
   supportsTools: boolean;
+  memory?: MemoryPromptInput;
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
+  const customInstructions = memory ? renderCustomInstructions(memory) : "";
+  const memoriesSection = memory?.memoryEnabled
+    ? renderMemoriesSection(memory.memories)
+    : "";
+
+  const head = [regularPrompt, customInstructions, memoriesSection]
+    .filter(Boolean)
+    .join("\n\n");
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}`;
+    return `${head}\n\n${requestPrompt}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+  return `${head}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

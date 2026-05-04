@@ -2,11 +2,14 @@ import type { InferSelectModel } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
+  index,
   json,
+  numeric,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -134,3 +137,64 @@ export const stream = pgTable(
 );
 
 export type Stream = InferSelectModel<typeof stream>;
+
+// ----------------------------------------------------------------------------
+// Phase 0 — daily-use polish: cross-conversation memory + per-user settings
+// New tables only; tenantId is nullable now and will be enforced in Phase A1.
+// ----------------------------------------------------------------------------
+
+export const userSettings = pgTable("UserSettings", {
+  userId: uuid("userId")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  tenantId: uuid("tenantId"),
+  memoryEnabled: boolean("memoryEnabled").notNull().default(true),
+  customInstructionsAbout: text("customInstructionsAbout"),
+  customInstructionsRespond: text("customInstructionsRespond"),
+  tonePreference: varchar("tonePreference", {
+    enum: ["concise", "detailed", "casual", "formal", "default"],
+  })
+    .notNull()
+    .default("default"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
+export type UserSettings = InferSelectModel<typeof userSettings>;
+
+export const userMemory = pgTable(
+  "UserMemory",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    tenantId: uuid("tenantId"),
+    content: text("content").notNull(),
+    contentHash: varchar("contentHash", { length: 64 }).notNull(),
+    category: varchar("category", {
+      enum: ["fact", "preference", "project", "other"],
+    })
+      .notNull()
+      .default("other"),
+    confidence: numeric("confidence", { precision: 3, scale: 2 })
+      .notNull()
+      .default("0.80"),
+    sourceChatId: uuid("sourceChatId").references(() => chat.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    lastAccessedAt: timestamp("lastAccessedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("user_memory_user_idx").on(table.userId),
+    hashUnique: uniqueIndex("user_memory_user_hash_uniq").on(
+      table.userId,
+      table.contentHash
+    ),
+    // The `tsv` generated column + GIN/trgm indexes are added in the SQL
+    // migration since drizzle-kit doesn't generate STORED generated columns.
+  })
+);
+
+export type UserMemory = InferSelectModel<typeof userMemory>;

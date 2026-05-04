@@ -94,10 +94,7 @@ export async function getCapabilities(): Promise<
   const results = await Promise.all(
     chatModels.map(async (model) => {
       if (model.id.startsWith("openai-direct/")) {
-        return [
-          model.id,
-          { tools: true, vision: true, reasoning: false },
-        ];
+        return [model.id, { tools: true, vision: true, reasoning: false }];
       }
       try {
         const res = await fetch(

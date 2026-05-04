@@ -110,8 +110,7 @@ export function MCPUIResource({
         maxHeight: MAX_HEIGHT,
       },
       theme: "dark" as const,
-      locale:
-        typeof navigator !== "undefined" ? navigator.language : "en-US",
+      locale: typeof navigator === "undefined" ? "en-US" : navigator.language,
       platform: "web" as const,
     }),
     []
@@ -189,7 +188,7 @@ export function MCPUIResource({
           overscrollBehaviorX: "contain",
         }}
       >
-      <style>{`
+        <style>{`
         .mcp-ui-scroll { scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.45) rgba(0,0,0,0.15); }
         .mcp-ui-scroll::-webkit-scrollbar { height: 12px; -webkit-appearance: none; display: block; }
         .mcp-ui-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.15); border-radius: 6px; }

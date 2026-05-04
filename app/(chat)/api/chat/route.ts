@@ -19,11 +19,17 @@ import {
   DEFAULT_CHAT_MODEL,
   getCapabilities,
 } from "@/lib/ai/models";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
+import {
+  type MemoryPromptInput,
+  type RequestHints,
+  systemPrompt,
+} from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
+import { recordTelemetry } from "@/lib/ai/telemetry";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
+import { createManageMemoryTool } from "@/lib/ai/tools/manage-memory";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -33,6 +39,8 @@ import {
   getChatById,
   getMessageCountByUserId,
   getMessagesByChatId,
+  getOrCreateUserSettings,
+  recallMemories,
   saveChat,
   saveMessages,
   updateChatTitleById,
@@ -116,7 +124,10 @@ export async function POST(request: Request) {
         title: "New chat",
         visibility: selectedVisibilityType,
       });
-      titlePromise = generateTitleFromUserMessage({ message });
+      titlePromise = generateTitleFromUserMessage({
+        message,
+        userId: session.user.id,
+      });
     }
 
     let uiMessages: ChatMessage[];
@@ -197,12 +208,57 @@ export async function POST(request: Request) {
       : {};
     const mcpToolNames = Object.keys(mcpTools);
 
+    // Phase 0 / P1 — load user settings + auto-recall memory.
+    const settings = await getOrCreateUserSettings({ userId: session.user.id });
+    const memoryEnabled = settings.memoryEnabled;
+
+    let recalledMemories: MemoryPromptInput["memories"] = [];
+    if (memoryEnabled && message?.role === "user") {
+      const userText = message.parts
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join(" ")
+        .trim();
+      if (userText.length > 0) {
+        try {
+          recalledMemories = await recallMemories({
+            userId: session.user.id,
+            query: userText,
+            limit: 8,
+            forAutoInjection: true,
+          });
+        } catch (err) {
+          console.warn("Memory auto-recall failed:", err);
+        }
+      }
+    }
+
+    const memoryPromptInput: MemoryPromptInput = {
+      memories: recalledMemories,
+      customInstructionsAbout: settings.customInstructionsAbout,
+      customInstructionsRespond: settings.customInstructionsRespond,
+      tonePreference: settings.tonePreference,
+      memoryEnabled,
+    };
+
+    const manageMemoryTool = createManageMemoryTool({
+      userId: session.user.id,
+      tenantId: settings.tenantId ?? null,
+      chatId: id,
+      memoryEnabled,
+    });
+
+    const telemetryStart = Date.now();
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const result = streamText({
           model: getLanguageModel(chatModel),
-          system: systemPrompt({ requestHints, supportsTools }),
+          system: systemPrompt({
+            requestHints,
+            supportsTools,
+            memory: memoryPromptInput,
+          }),
           messages: modelMessages,
           stopWhen: stepCountIs(5),
           experimental_activeTools:
@@ -214,6 +270,7 @@ export async function POST(request: Request) {
                   "editDocument",
                   "updateDocument",
                   "requestSuggestions",
+                  ...(memoryEnabled ? ["manage_memory"] : []),
                   ...mcpToolNames,
                 ] as never),
           providerOptions: {
@@ -242,11 +299,27 @@ export async function POST(request: Request) {
               dataStream,
               modelId: chatModel,
             }),
+            manage_memory: manageMemoryTool,
             ...mcpTools,
           },
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
             functionId: "stream-text",
+          },
+          onFinish: ({ usage }) => {
+            recordTelemetry(
+              {
+                feature: "chat",
+                userId: session.user.id,
+                model: chatModel,
+                tenantId: settings.tenantId ?? null,
+              },
+              {
+                tokensIn: usage?.inputTokens,
+                tokensOut: usage?.outputTokens,
+              },
+              Date.now() - telemetryStart
+            );
           },
         });
 

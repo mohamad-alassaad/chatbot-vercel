@@ -85,6 +85,13 @@ export function SidebarUserNav({ user }: { user: User }) {
             >
               {`Toggle ${resolvedTheme === "light" ? "dark" : "light"} mode`}
             </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer text-[13px]"
+              data-testid="user-nav-item-settings"
+              onSelect={() => router.push("/settings/memory")}
+            >
+              Settings
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild data-testid="user-nav-item-auth">
               <button

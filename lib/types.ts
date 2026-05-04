@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ArtifactKind } from "@/components/chat/artifact";
 import type { createDocument } from "./ai/tools/create-document";
 import type { getWeather } from "./ai/tools/get-weather";
+import type { createManageMemoryTool } from "./ai/tools/manage-memory";
 import type { requestSuggestions } from "./ai/tools/request-suggestions";
 import type { updateDocument } from "./ai/tools/update-document";
 import type { Suggestion } from "./db/schema";
@@ -19,12 +20,14 @@ type updateDocumentTool = InferUITool<ReturnType<typeof updateDocument>>;
 type requestSuggestionsTool = InferUITool<
   ReturnType<typeof requestSuggestions>
 >;
+type manageMemoryTool = InferUITool<ReturnType<typeof createManageMemoryTool>>;
 
 export type ChatTools = {
   getWeather: weatherTool;
   createDocument: createDocumentTool;
   updateDocument: updateDocumentTool;
   requestSuggestions: requestSuggestionsTool;
+  manage_memory: manageMemoryTool;
 };
 
 export type CustomUIDataTypes = {

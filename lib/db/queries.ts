@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import {
   and,
   asc,
@@ -11,6 +12,7 @@ import {
   inArray,
   lt,
   type SQL,
+  sql,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -28,7 +30,11 @@ import {
   stream,
   suggestion,
   type User,
+  type UserMemory,
+  type UserSettings,
   user,
+  userMemory,
+  userSettings,
   vote,
 } from "./schema";
 import { generateHashedPassword } from "./utils";
@@ -627,6 +633,379 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
     throw new ChatbotError(
       "bad_request:database",
       "Failed to get stream ids by chat id"
+    );
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Phase 0 / P1 — user settings + cross-conversation memory
+// All accessors take userId mandatorily. tenantId is reserved for Phase A1.
+// ----------------------------------------------------------------------------
+
+export type MemoryCategory = "fact" | "preference" | "project" | "other";
+
+export type MemoryHit = {
+  id: string;
+  content: string;
+  category: MemoryCategory;
+  confidence: number;
+  rank: number;
+};
+
+const MEMORY_RECALL_MIN_CONFIDENCE = 0.2;
+const MEMORY_AUTO_RECALL_MIN_CONFIDENCE = 0.4;
+const MEMORY_DEDUP_TRIGRAM_THRESHOLD = 0.85;
+
+function normalizeMemoryContent(content: string): string {
+  return content.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function hashMemoryContent(content: string): string {
+  return createHash("sha256")
+    .update(normalizeMemoryContent(content))
+    .digest("hex");
+}
+
+function clampConfidence(value: number): string {
+  const clamped = Math.max(0, Math.min(1, value));
+  return clamped.toFixed(2);
+}
+
+export async function getUserSettings({
+  userId,
+}: {
+  userId: string;
+}): Promise<UserSettings | null> {
+  try {
+    const [row] = await db
+      .select()
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to read user settings"
+    );
+  }
+}
+
+export async function getOrCreateUserSettings({
+  userId,
+  tenantId,
+}: {
+  userId: string;
+  tenantId?: string | null;
+}): Promise<UserSettings> {
+  const existing = await getUserSettings({ userId });
+  if (existing) {
+    return existing;
+  }
+  try {
+    const [created] = await db
+      .insert(userSettings)
+      .values({ userId, tenantId: tenantId ?? null })
+      .onConflictDoNothing({ target: userSettings.userId })
+      .returning();
+    if (created) {
+      return created;
+    }
+    const refreshed = await getUserSettings({ userId });
+    if (!refreshed) {
+      throw new Error("UserSettings row missing after upsert");
+    }
+    return refreshed;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to initialize user settings"
+    );
+  }
+}
+
+export async function updateUserSettings({
+  userId,
+  patch,
+}: {
+  userId: string;
+  patch: Partial<{
+    memoryEnabled: boolean;
+    customInstructionsAbout: string | null;
+    customInstructionsRespond: string | null;
+    tonePreference: "concise" | "detailed" | "casual" | "formal" | "default";
+  }>;
+}): Promise<UserSettings> {
+  try {
+    await getOrCreateUserSettings({ userId });
+    const [updated] = await db
+      .update(userSettings)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId))
+      .returning();
+    return updated;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to update user settings"
+    );
+  }
+}
+
+export async function rememberMemory({
+  userId,
+  tenantId,
+  content,
+  category = "other",
+  confidence = 0.8,
+  sourceChatId,
+}: {
+  userId: string;
+  tenantId?: string | null;
+  content: string;
+  category?: MemoryCategory;
+  confidence?: number;
+  sourceChatId?: string | null;
+}): Promise<{ memory: UserMemory; deduplicated: boolean }> {
+  const trimmed = content.trim();
+  if (trimmed.length === 0) {
+    throw new ChatbotError("bad_request:api", "Memory content cannot be empty");
+  }
+  const hash = hashMemoryContent(trimmed);
+  try {
+    // Step 1 — exact-hash dedup.
+    const [existingExact] = await db
+      .select()
+      .from(userMemory)
+      .where(
+        and(eq(userMemory.userId, userId), eq(userMemory.contentHash, hash))
+      )
+      .limit(1);
+    if (existingExact) {
+      const [bumped] = await db
+        .update(userMemory)
+        .set({
+          lastAccessedAt: new Date(),
+          confidence: clampConfidence(
+            Math.max(Number(existingExact.confidence), confidence) + 0.05
+          ),
+        })
+        .where(eq(userMemory.id, existingExact.id))
+        .returning();
+      return { memory: bumped, deduplicated: true };
+    }
+
+    // Step 2 — trigram-similar dedup (>= 0.85).
+    const similarRows = await db.execute(sql`
+      SELECT *, similarity("content", ${trimmed}) AS sim
+      FROM "UserMemory"
+      WHERE "userId" = ${userId}
+        AND "content" % ${trimmed}
+      ORDER BY sim DESC
+      LIMIT 1
+    `);
+    const similar = (
+      similarRows as unknown as Array<UserMemory & { sim: number }>
+    )[0];
+    if (similar && Number(similar.sim) >= MEMORY_DEDUP_TRIGRAM_THRESHOLD) {
+      const [bumped] = await db
+        .update(userMemory)
+        .set({
+          lastAccessedAt: new Date(),
+          confidence: clampConfidence(
+            Math.max(Number(similar.confidence), confidence) + 0.05
+          ),
+        })
+        .where(eq(userMemory.id, similar.id))
+        .returning();
+      return { memory: bumped, deduplicated: true };
+    }
+
+    // Step 3 — fresh insert.
+    const [created] = await db
+      .insert(userMemory)
+      .values({
+        userId,
+        tenantId: tenantId ?? null,
+        content: trimmed,
+        contentHash: hash,
+        category,
+        confidence: clampConfidence(confidence),
+        sourceChatId: sourceChatId ?? null,
+      })
+      .returning();
+    return { memory: created, deduplicated: false };
+  } catch (error) {
+    if (error instanceof ChatbotError) {
+      throw error;
+    }
+    throw new ChatbotError("bad_request:database", "Failed to save memory");
+  }
+}
+
+export async function recallMemories({
+  userId,
+  query,
+  limit = 8,
+  forAutoInjection = false,
+}: {
+  userId: string;
+  query: string;
+  limit?: number;
+  forAutoInjection?: boolean;
+}): Promise<MemoryHit[]> {
+  const trimmedQuery = query.trim();
+  if (trimmedQuery.length === 0) {
+    return [];
+  }
+  const minConfidence = forAutoInjection
+    ? MEMORY_AUTO_RECALL_MIN_CONFIDENCE
+    : MEMORY_RECALL_MIN_CONFIDENCE;
+  try {
+    const rows = await db.execute(sql`
+      SELECT
+        "id",
+        "content",
+        "category",
+        "confidence",
+        (
+          ts_rank(tsv, plainto_tsquery('simple', ${trimmedQuery})) * 0.6 +
+          similarity("content", ${trimmedQuery}) * 0.3 +
+          GREATEST(
+            0,
+            1 - (EXTRACT(EPOCH FROM (now() - "lastAccessedAt")) / (60 * 60 * 24 * 30))
+          ) * 0.1
+        ) AS rank
+      FROM "UserMemory"
+      WHERE "userId" = ${userId}
+        AND "confidence" >= ${minConfidence}
+        AND (
+          tsv @@ plainto_tsquery('simple', ${trimmedQuery})
+          OR "content" % ${trimmedQuery}
+        )
+      ORDER BY rank DESC
+      LIMIT ${limit}
+    `);
+    const hits = (
+      rows as unknown as Array<{
+        id: string;
+        content: string;
+        category: MemoryCategory;
+        confidence: string;
+        rank: number;
+      }>
+    ).map<MemoryHit>((r) => ({
+      id: r.id,
+      content: r.content,
+      category: r.category,
+      confidence: Number(r.confidence),
+      rank: Number(r.rank),
+    }));
+
+    if (hits.length > 0) {
+      const ids = hits.map((h) => h.id);
+      await db
+        .update(userMemory)
+        .set({
+          lastAccessedAt: new Date(),
+          confidence: sql`LEAST(1.0, ${userMemory.confidence}::numeric + 0.02)`,
+        })
+        .where(inArray(userMemory.id, ids));
+    }
+    return hits;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to recall memories");
+  }
+}
+
+export async function listMemories({
+  userId,
+  limit = 200,
+}: {
+  userId: string;
+  limit?: number;
+}): Promise<UserMemory[]> {
+  try {
+    return await db
+      .select()
+      .from(userMemory)
+      .where(eq(userMemory.userId, userId))
+      .orderBy(desc(userMemory.lastAccessedAt))
+      .limit(limit);
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to list memories");
+  }
+}
+
+export async function updateMemory({
+  id,
+  userId,
+  patch,
+}: {
+  id: string;
+  userId: string;
+  patch: Partial<{
+    content: string;
+    category: MemoryCategory;
+    confidence: number;
+  }>;
+}): Promise<UserMemory | null> {
+  try {
+    const updates: Record<string, unknown> = { lastAccessedAt: new Date() };
+    if (typeof patch.content === "string") {
+      updates.content = patch.content.trim();
+      updates.contentHash = hashMemoryContent(patch.content);
+    }
+    if (patch.category) {
+      updates.category = patch.category;
+    }
+    if (typeof patch.confidence === "number") {
+      updates.confidence = clampConfidence(patch.confidence);
+    }
+    const [updated] = await db
+      .update(userMemory)
+      .set(updates)
+      .where(and(eq(userMemory.id, id), eq(userMemory.userId, userId)))
+      .returning();
+    return updated ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to update memory");
+  }
+}
+
+export async function forgetMemory({
+  id,
+  userId,
+}: {
+  id: string;
+  userId: string;
+}): Promise<boolean> {
+  try {
+    const result = await db
+      .delete(userMemory)
+      .where(and(eq(userMemory.id, id), eq(userMemory.userId, userId)))
+      .returning({ id: userMemory.id });
+    return result.length > 0;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to delete memory");
+  }
+}
+
+export async function deleteAllMemories({
+  userId,
+}: {
+  userId: string;
+}): Promise<number> {
+  try {
+    const result = await db
+      .delete(userMemory)
+      .where(eq(userMemory.userId, userId))
+      .returning({ id: userMemory.id });
+    return result.length;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to delete all memories"
     );
   }
 }

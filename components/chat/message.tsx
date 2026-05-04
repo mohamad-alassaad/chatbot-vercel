@@ -1,6 +1,7 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { hasUIPayload } from "@/lib/ai/mcp/types";
+import type { ManageMemoryOutput } from "@/lib/ai/tools/manage-memory";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
@@ -18,6 +19,7 @@ import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { SparklesIcon } from "./icons";
 import { MCPUIResource } from "./mcp-ui-resource";
+import { MemoryIndicator } from "./memory-indicator";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
@@ -266,6 +268,24 @@ const PurePreviewMessage = ({
           />
         </div>
       );
+    }
+
+    if (type === "tool-manage_memory") {
+      const memPart = part as {
+        toolCallId: string;
+        state: string;
+        output?: ManageMemoryOutput;
+      };
+      if (memPart.state === "output-available" && memPart.output) {
+        return (
+          <MemoryIndicator
+            key={memPart.toolCallId}
+            output={memPart.output}
+            toolCallId={memPart.toolCallId}
+          />
+        );
+      }
+      return null;
     }
 
     if (type === "dynamic-tool") {
