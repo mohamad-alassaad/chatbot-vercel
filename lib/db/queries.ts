@@ -991,6 +991,75 @@ export async function forgetMemory({
   }
 }
 
+// ----------------------------------------------------------------------------
+// Phase 0 / P3 — full-text search across messages
+// ----------------------------------------------------------------------------
+
+export type MessageSearchHit = {
+  messageId: string;
+  chatId: string;
+  chatTitle: string;
+  role: string;
+  parts: unknown;
+  createdAt: Date;
+  rank: number;
+};
+
+export async function searchMessages({
+  userId,
+  query,
+  limit = 50,
+}: {
+  userId: string;
+  query: string;
+  limit?: number;
+}): Promise<MessageSearchHit[]> {
+  const trimmed = query.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+  try {
+    const rows = await db.execute(sql`
+      SELECT
+        m."id"          AS "messageId",
+        m."chatId"      AS "chatId",
+        c."title"       AS "chatTitle",
+        m."role"        AS "role",
+        m."parts"       AS "parts",
+        m."createdAt"   AS "createdAt",
+        ts_rank(m."tsv", plainto_tsquery('simple', ${trimmed})) AS "rank"
+      FROM "Message_v2" m
+      JOIN "Chat" c ON c."id" = m."chatId"
+      WHERE c."userId" = ${userId}
+        AND m."tsv" @@ plainto_tsquery('simple', ${trimmed})
+      ORDER BY "rank" DESC, m."createdAt" DESC
+      LIMIT ${limit}
+    `);
+    return (
+      rows as unknown as Array<{
+        messageId: string;
+        chatId: string;
+        chatTitle: string;
+        role: string;
+        parts: unknown;
+        createdAt: string | Date;
+        rank: number;
+      }>
+    ).map((r) => ({
+      messageId: r.messageId,
+      chatId: r.chatId,
+      chatTitle: r.chatTitle,
+      role: r.role,
+      parts: r.parts,
+      createdAt:
+        r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt),
+      rank: Number(r.rank),
+    }));
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to search messages");
+  }
+}
+
 export async function deleteAllMemories({
   userId,
 }: {

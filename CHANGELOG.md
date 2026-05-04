@@ -5,6 +5,58 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P3 — Full-text search across conversations (shipped)
+
+Replaces the title-only search with content-based search across every
+message the user has ever sent or received.
+
+**Added**
+
+- Migration `0002_message_tsv.sql`: a `tsvector` generated column on
+  `Message_v2(parts::text)` plus a GIN index. Indexing the JSON
+  serialization keeps the schema simple — snippet rendering happens at
+  read time.
+- `searchMessages({ userId, query, limit })` ([lib/db/queries.ts](lib/db/queries.ts)):
+  ranked by `ts_rank` desc, tie-broken by `createdAt` desc, joined on
+  `Chat` for auth scoping (`Chat.userId = session.user.id`).
+- `lib/search/snippet.ts`: pure function that walks `parts`, extracts
+  text/reasoning content, finds the best window around the first match,
+  and returns an HTML-escaped snippet with `<mark>…</mark>` tags around
+  every matched token. Regex-meta safe.
+- `GET /api/search/messages?q=…&limit=…`: auth-checked, returns
+  `{ query, results, latencyMs }`. Logs latency for the <300 ms gate.
+- `<SearchPalette>` ([components/chat/search-palette.tsx](components/chat/search-palette.tsx)) — global
+  Cmd+K (or Ctrl+K) command palette using `cmdk`. Debounced fetch
+  (180 ms), abort-on-keystroke, snippet rendering with highlighted
+  matches, keyboard nav. Picking a result navigates to
+  `/chat/<chatId>?q=<term>#m-<messageId>` (deep-link anchor reserved for
+  future scroll-to-message).
+- Wired into the chat layout, so the palette is available everywhere.
+
+**Tests**
+
+- 12 new Vitest cases covering `extractText` + `buildSnippet`: empty
+  inputs, multi-token highlighting, case-insensitive match with preserved
+  source case, regex-meta literals, ellipsis prefixing, and XSS escape
+  (a `<script>` payload is rendered as `&lt;script&gt;` while the
+  injected `<mark>` survives). Total Vitest: **34 / 34**.
+
+**Notes / trade-offs**
+
+- We index `parts::text` (the JSON serialization), which is noisier than
+  a clean `searchText` column would be — it can match on JSON keys like
+  `"text"` themselves. In practice the snippet extractor produces clean
+  output, and search ranking still surfaces relevant hits first.
+- Snippet uses `dangerouslySetInnerHTML` to render the `<mark>` tags;
+  the input is HTML-escaped server-side first, so only the host-injected
+  `<mark>` markup survives. Verified by a unit test.
+- Auto-scroll-to-message at the destination chat is **deferred**: the
+  URL hash `#m-<messageId>` is in place for it. A small client effect
+  reading the hash + `scrollIntoView` would close the loop — Phase 0
+  follow-up.
+- Cmd+K binding lands here so P7 (keyboard shortcuts) only needs to
+  cover the rest (Cmd+Shift+O, Cmd+,, Esc, ?).
+
 ### P2 — Custom Instructions (shipped)
 
 The schema fields and `systemPrompt` rendering already landed during P1. P2
