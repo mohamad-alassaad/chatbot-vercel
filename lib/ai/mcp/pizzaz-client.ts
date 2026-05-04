@@ -9,14 +9,55 @@ import type { MCPToolOutput, MCPUIPayload } from "./types";
 
 const TEMPLATE_META_KEY = "openai/outputTemplate";
 
-type ConnectedClient = {
+type ServerConfig = {
+  name: string;
+  url: string;
+};
+
+type ConnectedServer = {
+  name: string;
   client: Client;
   tools: MCPTool[];
   toolByName: Map<string, MCPTool>;
+};
+
+type Registry = {
+  servers: ConnectedServer[];
+  toolToServer: Map<string, ConnectedServer>;
   resourceCache: Map<string, MCPUIPayload>;
 };
 
-let connection: Promise<ConnectedClient> | null = null;
+let registry: Promise<Registry> | null = null;
+
+function parseServerConfigs(): ServerConfig[] {
+  // MCP_SERVERS preferred. Format:
+  //   MCP_SERVERS=name1=url1,name2=url2          (named)
+  //   MCP_SERVERS=url1,url2                      (auto-named from host:port)
+  // MCP_PIZZAZ_URL kept as a fallback so older .env.local files keep working.
+  const raw = process.env.MCP_SERVERS ?? process.env.MCP_PIZZAZ_URL;
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry, index) => {
+      const eq = entry.indexOf("=");
+      if (eq > 0) {
+        const name = entry.slice(0, eq).trim();
+        const url = entry.slice(eq + 1).trim();
+        return { name, url };
+      }
+      try {
+        const parsed = new URL(entry);
+        const name = `${parsed.hostname}_${parsed.port || "default"}`;
+        return { name, url: entry };
+      } catch {
+        return { name: `mcp_${index}`, url: entry };
+      }
+    });
+}
 
 async function tryConnect(
   url: URL,
@@ -34,17 +75,8 @@ async function tryConnect(
   return client;
 }
 
-async function connect(): Promise<ConnectedClient> {
-  const raw = process.env.MCP_PIZZAZ_URL;
-  if (!raw) {
-    throw new Error(
-      "MCP_PIZZAZ_URL is not set. Point it at the MCP server's HTTP endpoint, e.g. http://localhost:8000/mcp"
-    );
-  }
-  const url = new URL(raw);
-
-  // Try modern Streamable HTTP first (Python FastMCP, recent Node servers),
-  // fall back to legacy SSE (older servers like the Node Pizzaz example).
+async function connectServer(config: ServerConfig): Promise<ConnectedServer> {
+  const url = new URL(config.url);
   let client: Client;
   let transportUsed: "streamable-http" | "sse";
   try {
@@ -55,29 +87,72 @@ async function connect(): Promise<ConnectedClient> {
       client = await tryConnect(url, "sse");
       transportUsed = "sse";
     } catch (sseErr) {
-      console.warn("[mcp] both streamable-http and sse transports failed:", {
-        httpErr,
-        sseErr,
-      });
+      console.warn(
+        `[mcp:${config.name}] both transports failed for ${config.url}:`,
+        { httpErr, sseErr }
+      );
       throw sseErr;
     }
   }
-  console.log(`[mcp] connected via ${transportUsed} to ${url.href}`);
-
   const { tools } = await client.listTools();
-  const toolByName = new Map(tools.map((t) => [t.name, t]));
-
-  return { client, tools, toolByName, resourceCache: new Map() };
+  console.log(
+    `[mcp:${config.name}] connected via ${transportUsed} (${tools.length} tools)`
+  );
+  return {
+    name: config.name,
+    client,
+    tools,
+    toolByName: new Map(tools.map((t) => [t.name, t])),
+  };
 }
 
-function getConnection(): Promise<ConnectedClient> {
-  if (!connection) {
-    connection = connect().catch((err) => {
-      connection = null;
+async function buildRegistry(): Promise<Registry> {
+  const configs = parseServerConfigs();
+  if (configs.length === 0) {
+    return {
+      servers: [],
+      toolToServer: new Map(),
+      resourceCache: new Map(),
+    };
+  }
+  const settled = await Promise.allSettled(configs.map(connectServer));
+  const servers: ConnectedServer[] = [];
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      servers.push(result.value);
+    } else {
+      console.warn(
+        `[mcp] failed to connect to ${configs[i].name} (${configs[i].url}):`,
+        result.reason
+      );
+    }
+  }
+
+  const toolToServer = new Map<string, ConnectedServer>();
+  for (const server of servers) {
+    for (const tool of server.tools) {
+      const existing = toolToServer.get(tool.name);
+      if (existing) {
+        console.warn(
+          `[mcp] tool name collision: '${tool.name}' is exposed by both '${existing.name}' and '${server.name}'. Keeping the first.`
+        );
+        continue;
+      }
+      toolToServer.set(tool.name, server);
+    }
+  }
+  return { servers, toolToServer, resourceCache: new Map() };
+}
+
+function getRegistry(): Promise<Registry> {
+  if (!registry) {
+    registry = buildRegistry().catch((err) => {
+      registry = null;
       throw err;
     });
   }
-  return connection;
+  return registry;
 }
 
 function getTemplateUri(tool: MCPTool): string | undefined {
@@ -87,15 +162,16 @@ function getTemplateUri(tool: MCPTool): string | undefined {
 }
 
 async function readUIResource(
-  conn: ConnectedClient,
+  reg: Registry,
+  server: ConnectedServer,
   templateUri: string
 ): Promise<MCPUIPayload | undefined> {
-  const cached = conn.resourceCache.get(templateUri);
+  const cacheKey = `${server.name}::${templateUri}`;
+  const cached = reg.resourceCache.get(cacheKey);
   if (cached) {
     return cached;
   }
-
-  const result = await conn.client.readResource({ uri: templateUri });
+  const result = await server.client.readResource({ uri: templateUri });
   const first = result.contents?.[0];
   if (
     !first ||
@@ -104,7 +180,6 @@ async function readUIResource(
   ) {
     return;
   }
-
   const payload: MCPUIPayload = {
     templateUri,
     mimeType: String(
@@ -112,7 +187,7 @@ async function readUIResource(
     ),
     html: (first as { text: string }).text,
   };
-  conn.resourceCache.set(templateUri, payload);
+  reg.resourceCache.set(cacheKey, payload);
   return payload;
 }
 
@@ -138,49 +213,48 @@ export async function callPizzazTool(
   toolName: string,
   args: Record<string, unknown>
 ): Promise<MCPToolOutput> {
-  const conn = await getConnection();
-  const descriptor = conn.toolByName.get(toolName);
-  if (!descriptor) {
-    throw new Error(`Unknown Pizzaz tool: ${toolName}`);
+  const reg = await getRegistry();
+  const server = reg.toolToServer.get(toolName);
+  if (!server) {
+    throw new Error(`Unknown MCP tool: ${toolName}`);
   }
-
-  const result = await conn.client.callTool({
+  const descriptor = server.toolByName.get(toolName);
+  if (!descriptor) {
+    throw new Error(`Tool ${toolName} not found on server ${server.name}`);
+  }
+  const result = await server.client.callTool({
     name: toolName,
     arguments: args,
   });
   const text = extractText(result.content);
   const structuredContent = result.structuredContent;
-
   const templateUri = getTemplateUri(descriptor);
   const ui = templateUri
-    ? await readUIResource(conn, templateUri).catch(() => undefined)
+    ? await readUIResource(reg, server, templateUri).catch(() => undefined)
     : undefined;
-
   return { text, structuredContent, ui };
 }
 
 export async function getPizzazTools() {
-  const conn = await getConnection();
+  const reg = await getRegistry();
   const out: Record<string, ReturnType<typeof dynamicTool>> = {};
-
-  for (const descriptor of conn.tools) {
-    const inputSchema = jsonSchema(descriptor.inputSchema as JSONSchema7);
-    out[descriptor.name] = dynamicTool({
-      description:
-        descriptor.description ?? descriptor.title ?? descriptor.name,
-      inputSchema,
+  for (const [toolName, server] of reg.toolToServer.entries()) {
+    const descriptor = server.toolByName.get(toolName);
+    if (!descriptor) {
+      continue;
+    }
+    const inputSchemaJson = jsonSchema(descriptor.inputSchema as JSONSchema7);
+    out[toolName] = dynamicTool({
+      description: descriptor.description ?? descriptor.title ?? toolName,
+      inputSchema: inputSchemaJson,
       execute: async (args: unknown) =>
-        callPizzazTool(
-          descriptor.name,
-          (args ?? {}) as Record<string, unknown>
-        ),
+        callPizzazTool(toolName, (args ?? {}) as Record<string, unknown>),
     });
   }
-
   return out;
 }
 
 export async function getPizzazToolNames(): Promise<string[]> {
-  const conn = await getConnection();
-  return conn.tools.map((t) => t.name);
+  const reg = await getRegistry();
+  return Array.from(reg.toolToServer.keys());
 }

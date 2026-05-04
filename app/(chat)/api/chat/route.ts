@@ -200,9 +200,12 @@ export async function POST(request: Request) {
 
     const modelMessages = await convertToModelMessages(uiMessages);
 
-    const mcpTools = process.env.MCP_PIZZAZ_URL
+    const hasMcpConfig = Boolean(
+      process.env.MCP_SERVERS ?? process.env.MCP_PIZZAZ_URL
+    );
+    const mcpTools = hasMcpConfig
       ? await getPizzazTools().catch((err) => {
-          console.warn("Failed to load Pizzaz MCP tools:", err);
+          console.warn("Failed to load MCP tools:", err);
           return {};
         })
       : {};
