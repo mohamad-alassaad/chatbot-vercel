@@ -13,51 +13,78 @@ import {
 
 const categoryEnum = z.enum(["fact", "preference", "project", "other"]);
 
-const inputSchema = z.discriminatedUnion("action", [
+// OpenAI's Responses API requires a tool's parameters JSON Schema to have a
+// top-level `type: "object"`. `z.discriminatedUnion` would emit `anyOf` at the
+// root, which OpenAI rejects with "schema must be a JSON Schema of 'type:
+// object'". So we expose a flat object as the public tool schema and re-parse
+// inside `execute` with a discriminated union for end-to-end type safety.
+const inputSchema = z.object({
+  action: z
+    .enum(["remember", "recall", "forget", "update"])
+    .describe(
+      "Sub-action to perform on the user's durable memory. 'remember' to save, 'recall' to look up, 'forget' to delete by id, 'update' to modify by id."
+    ),
+  content: z
+    .string()
+    .min(3)
+    .max(500)
+    .optional()
+    .describe(
+      "Required for 'remember'. Optional for 'update'. Concise third-person fact, e.g. 'User is vegetarian'."
+    ),
+  category: categoryEnum
+    .optional()
+    .describe(
+      "For 'remember' and 'update': category bucket. Defaults to 'other'."
+    ),
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe(
+      "For 'remember' and 'update': how confident you are this is a stable fact, 0-1. Defaults to 0.8."
+    ),
+  query: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe("Required for 'recall'. The lookup query."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(20)
+    .optional()
+    .describe(
+      "Optional for 'recall'. Max number of hits to return. Default 5."
+    ),
+  memoryId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe("Required for 'forget' and 'update'. UUID of the target memory."),
+});
+
+const runtimeSchema = z.discriminatedUnion("action", [
   z.object({
-    action: z
-      .literal("remember")
-      .describe(
-        "Save a new memory about the user. Use only for stable facts, preferences, or active projects worth remembering across conversations. Do NOT save transient data, secrets, or anything the user said in passing."
-      ),
-    content: z
-      .string()
-      .min(3)
-      .max(500)
-      .describe(
-        "Concise third-person fact, e.g. 'User is vegetarian' or 'User is working on the Atlas migration project'."
-      ),
+    action: z.literal("remember"),
+    content: z.string().min(3).max(500),
     category: categoryEnum.default("other"),
-    confidence: z
-      .number()
-      .min(0)
-      .max(1)
-      .default(0.8)
-      .describe("How confident you are this is a stable fact, 0-1."),
+    confidence: z.number().min(0).max(1).default(0.8),
   }),
   z.object({
-    action: z
-      .literal("recall")
-      .describe(
-        "Look up memories relevant to a query. Top relevant memories from the user's prior conversations are already auto-injected; only call this for explicit user questions like 'what do you remember about me?'."
-      ),
+    action: z.literal("recall"),
     query: z.string().min(1).max(200),
     limit: z.number().int().min(1).max(20).default(5),
   }),
   z.object({
-    action: z
-      .literal("forget")
-      .describe(
-        "Delete a specific memory by id. Use when the user asks you to forget something."
-      ),
+    action: z.literal("forget"),
     memoryId: z.string().uuid(),
   }),
   z.object({
-    action: z
-      .literal("update")
-      .describe(
-        "Update content, category, or confidence of an existing memory."
-      ),
+    action: z.literal("update"),
     memoryId: z.string().uuid(),
     content: z.string().min(3).max(500).optional(),
     category: categoryEnum.optional(),
@@ -66,6 +93,7 @@ const inputSchema = z.discriminatedUnion("action", [
 ]);
 
 export type ManageMemoryInput = z.infer<typeof inputSchema>;
+export type ManageMemoryRuntimeInput = z.infer<typeof runtimeSchema>;
 
 export type ManageMemoryOutput =
   | {
@@ -110,13 +138,21 @@ export function createManageMemoryTool(deps: ManageMemoryToolDeps) {
   return tool({
     description: DESCRIPTION,
     inputSchema,
-    execute: async (input): Promise<ManageMemoryOutput> => {
+    execute: async (raw): Promise<ManageMemoryOutput> => {
       if (!deps.memoryEnabled) {
         return {
           kind: "noop",
           reason: "Memory feature is disabled by the user.",
         };
       }
+      const parsed = runtimeSchema.safeParse(raw);
+      if (!parsed.success) {
+        return {
+          kind: "noop",
+          reason: `Invalid arguments for action '${(raw as { action?: string }).action ?? "?"}': ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+        };
+      }
+      const input = parsed.data;
       switch (input.action) {
         case "remember": {
           const { memory, deduplicated } = await rememberMemory({
