@@ -5,6 +5,49 @@ has shipped to `main` is listed under each phase.
 
 ## Phase 0 — Daily-use polish
 
+### P6 — Export conversation (Markdown + PDF) (shipped)
+
+Download any chat as a clean `.md` or a print-ready `.pdf`.
+
+**Added**
+
+- `lib/chat/export.ts`: pure converter `chatToMarkdown(chat, messages)`
+  walking text/reasoning/file parts. Roles get `## You` / `## Assistant`
+  headers with ISO-Z timestamps; reasoning renders as a blockquote;
+  file attachments render as markdown links. Empty messages are
+  skipped. Includes `slugifyTitle()` for safe filenames (NFKD,
+  diacritic strip, max 60 chars, falls back to `chat`).
+- `lib/chat/export-pdf.tsx`: `<ChatExportDocument>` for
+  `@react-pdf/renderer`. LETTER size, Helvetica, page-breakable
+  messages with `wrap={false}` per message, italicized reasoning with
+  a left border. PDF generation is import-deferred in the route so the
+  Markdown path stays cheap.
+- `GET /api/chats/:id/export?format=md|pdf`: auth + ownership-checked,
+  returns the right MIME type with a `Content-Disposition: attachment`
+  header (filename derived from chat title slug).
+- Sidebar UX: "Download" submenu added at the top of each chat row's
+  dropdown, with "Markdown (.md)" and "PDF (.pdf)" entries. The
+  download is triggered via a temporary `<a download>` element fed
+  with a `Blob` URL (cleaned up on click).
+
+**Tests**
+
+- `tests/unit/chat-export.test.ts` (17 tests): `slugifyTitle` edge
+  cases (empty, diacritics, very long), `renderMessageBlocks` (non-array
+  parts, empty/whitespace, attachment defaults, unknown types),
+  `chatToMarkdown` (skeleton on empty, untitled fallback, role labels,
+  reasoning blockquote, attachments, skipping empty messages, blank-line
+  collapsing, single trailing newline).
+- 65/65 unit tests pass; typecheck clean; biome clean.
+
+**Trade-offs**
+
+- `@react-pdf/renderer` over headless Chromium / Puppeteer: no browser
+  process, runs cleanly in the Next.js server runtime, ships smaller.
+- Server-side rendering for both formats so unauthenticated users
+  never hit the export endpoint and there's no client-side bundle hit
+  for the PDF library.
+
 ### P5 — Pinned conversations (shipped)
 
 Pin chats to keep them at the top of their bucket — works inside both

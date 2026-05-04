@@ -1,5 +1,5 @@
 import { useDraggable } from "@dnd-kit/core";
-import { PinIcon, PinOffIcon } from "lucide-react";
+import { DownloadIcon, FileTextIcon, PinIcon, PinOffIcon } from "lucide-react";
 import Link from "next/link";
 import { memo } from "react";
 import { toast } from "sonner";
@@ -58,6 +58,29 @@ const PureChatItem = ({
   });
   const { mutate } = useSWRConfig();
   const pinned = isPinned(chat);
+
+  const handleDownload = async (format: "md" | "pdf") => {
+    try {
+      const res = await fetch(`/api/chats/${chat.id}/export?format=${format}`);
+      if (!res.ok) {
+        throw new Error("Export failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const cd = res.headers.get("content-disposition") ?? "";
+      const match = cd.match(/filename="([^"]+)"/);
+      a.download = match?.[1] ?? `chat.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${format.toUpperCase()}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    }
+  };
 
   const handleTogglePin = async () => {
     const next = !pinned;
@@ -126,6 +149,30 @@ const PureChatItem = ({
             {pinned ? <PinOffIcon /> : <PinIcon />}
             <span>{pinned ? "Unpin" : "Pin"}</span>
           </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="cursor-pointer">
+              <DownloadIcon />
+              <span>Download</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onSelect={() => handleDownload("md")}
+                >
+                  <FileTextIcon />
+                  <span>Markdown (.md)</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onSelect={() => handleDownload("pdf")}
+                >
+                  <FileTextIcon />
+                  <span>PDF (.pdf)</span>
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuPortal>
+          </DropdownMenuSub>
           <DropdownMenuSeparator />
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="cursor-pointer">
